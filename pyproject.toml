@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "auto_actuary"
+version = "0.1.0"
+description = "Actuarial analytics platform for P&C carriers — FCAS-level math, executive-grade output"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "auto_actuary contributors" }]
+keywords = ["actuarial", "insurance", "p&c", "fcas", "reserving", "ratemaking"]
+
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.25",
+    "scipy>=1.11",
+    "openpyxl>=3.1",
+    "jinja2>=3.1",
+    "plotly>=5.18",
+    "pyyaml>=6.0",
+    "typer[all]>=0.9",
+    "rich>=13.0",
+    "kaleido>=0.2",      # plotly static image export
+    "sqlalchemy>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "black>=23.0",
+    "ruff>=0.1",
+    "mypy>=1.6",
+]
+notebook = [
+    "jupyter>=1.0",
+    "ipywidgets>=8.0",
+]
+
+[project.scripts]
+auto-actuary = "auto_actuary.cli.main:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["auto_actuary*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"

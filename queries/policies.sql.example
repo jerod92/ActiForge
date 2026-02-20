@@ -1,0 +1,33 @@
+-- =============================================================================
+-- policies.sql.example
+-- =============================================================================
+-- REQUIRED OUTPUT: One row per policy term
+-- =============================================================================
+
+SELECT
+    p.policy_id                                          AS policy_id,
+    p.policy_number                                      AS policy_number,
+    CAST(p.written_date AS DATE)                         AS written_date,
+    CAST(p.effective_date AS DATE)                       AS eff_date,
+    CAST(p.expiration_date AS DATE)                      AS exp_date,
+    CAST(p.cancel_date AS DATE)                          AS cancel_date,
+    p.line_of_business_code                              AS lob_code,
+    p.sub_line_code                                      AS sub_line,
+    p.territory_code                                     AS terr_code,
+    p.underwriting_class                                 AS class_code,
+    p.insured_id                                         AS insured_id,
+    p.agent_code                                         AS agent_code,
+    COALESCE(t.written_premium, p.policy_premium, 0)    AS wrt_prem,
+    COALESCE(t.written_exposure, 1.0)                    AS wrt_exposure,
+    p.exposure_unit_label                                AS exp_unit,
+    t.transaction_type_code                              AS txn_type
+FROM
+    your_schema.policies p
+    LEFT JOIN your_schema.policy_transactions t
+        ON t.policy_id = p.policy_id
+        AND t.transaction_type_code IN ('NB', 'RN')  -- base transactions only
+WHERE
+    p.effective_date >= '2015-01-01'
+ORDER BY
+    p.effective_date, p.policy_id
+;

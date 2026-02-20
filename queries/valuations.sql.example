@@ -1,0 +1,66 @@
+-- =============================================================================
+-- valuations.sql.example
+-- =============================================================================
+-- REQUIRED OUTPUT: One row per (claim_id, valuation_date)
+--
+-- This query must produce year-end snapshots of claim financials.
+-- auto_actuary uses these snapshots to build development triangles.
+--
+-- ADAPT THIS TO YOUR SCHEMA:
+--   1. Replace table names (your_schema.claim_snapshots, etc.)
+--   2. Ensure column aliases match the canonical names below
+--   3. Filter to year-end dates (or whatever evaluation frequency you use)
+--   4. Save result as CSV or execute via session.load_sql()
+-- =============================================================================
+
+SELECT
+    c.claim_id                                          AS claim_id,
+
+    -- Evaluation date (year-end snapshots for annual triangles)
+    CAST(DATEADD(MONTH, -1, DATEADD(YEAR, 1,
+        DATEFROMPARTS(YEAR(s.snapshot_date), 1, 1)))
+    AS DATE)                                            AS valuation_date,
+
+    -- Paid losses (cumulative)
+    COALESCE(s.paid_loss_amount, 0)                     AS paid_loss,
+
+    -- Outstanding case reserve
+    COALESCE(s.case_reserve_amount, 0)                  AS case_reserve,
+
+    -- Incurred = paid + case (auto_actuary will compute if absent)
+    COALESCE(s.paid_loss_amount, 0)
+      + COALESCE(s.case_reserve_amount, 0)              AS incurred_loss,
+
+    -- Allocated loss adjustment expenses
+    COALESCE(s.paid_defense_cost, 0)
+      + COALESCE(s.paid_coverage_cost, 0)               AS paid_alae,
+    COALESCE(s.reserve_defense_cost, 0)                 AS case_alae,
+
+    -- Claim status indicators
+    CASE WHEN s.claim_status = 'CLOSED' THEN 1
+         ELSE 0 END                                      AS paid_count,
+    CASE WHEN s.claim_status IN ('OPEN', 'REOPENED')
+         THEN 1 ELSE 0 END                               AS open_count
+
+FROM
+    your_schema.claim_snapshots s
+    INNER JOIN your_schema.claims c
+        ON c.id = s.claim_id
+    INNER JOIN your_schema.policies p
+        ON p.policy_id = c.policy_id
+
+WHERE
+    -- Year-end snapshots only (for 12-month development triangles)
+    MONTH(s.snapshot_date) = 12
+    AND DAY(s.snapshot_date) = 31
+
+    -- Optionally filter by LOB
+    -- AND p.line_of_business_code = 'PPA'
+
+    -- Optionally filter to a date range
+    -- AND s.snapshot_date BETWEEN '2015-12-31' AND '2023-12-31'
+
+ORDER BY
+    c.claim_id,
+    s.snapshot_date
+;

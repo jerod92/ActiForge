@@ -1,0 +1,133 @@
+# =============================================================================
+# auto_actuary — Schema Configuration
+# =============================================================================
+# Map YOUR database column names to the canonical aliases used throughout the
+# codebase.  Only columns listed here will be recognized by the loaders.
+#
+# Format:
+#   <table_alias>:
+#     canonical_name: your_actual_column_name
+#
+# Leave the right-hand value blank ("") if you want to use the canonical name
+# as-is (e.g., if your DB already uses "policy_id").
+#
+# Supported table aliases:  policies | transactions | claims | valuations
+#                           coverages | rate_changes | expenses
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Connection / source hints  (overridden by CLI flags or session kwargs)
+# ---------------------------------------------------------------------------
+source:
+  type: csv            # csv | sqlite | sqlalchemy | dataframe
+  base_path: ./data    # where to find .csv files when type=csv
+  # connection_string: "postgresql://user:pass@host/db"  # for sqlalchemy
+
+# ---------------------------------------------------------------------------
+# Policies
+# Grain: one row per policy term
+# ---------------------------------------------------------------------------
+policies:
+  policy_id:          policy_id           # unique internal policy key
+  policy_number:      policy_number       # display identifier
+  written_date:       written_date        # date transaction was recorded
+  effective_date:     eff_date            # coverage start date
+  expiration_date:    exp_date            # coverage end date
+  cancel_date:        cancel_date         # date cancelled (null if in-force)
+  line_of_business:   lob_code            # e.g. PPA, HO, CMP, WC
+  sub_line:           sub_line            # optional sub-classification
+  territory:          terr_code           # state / territory code
+  class_code:         class_code          # underwriting class
+  risk_id:            insured_id
+  agent_id:           agent_code
+  written_premium:    wrt_prem
+  written_exposure:   wrt_exposure        # car-years, house-years, etc.
+  exposure_unit:      exp_unit            # label: "car-year", "house-year"
+
+# ---------------------------------------------------------------------------
+# Transactions
+# Grain: one row per transaction (NB, RN, EN, XL, CN)
+# ---------------------------------------------------------------------------
+transactions:
+  transaction_id:     txn_id
+  policy_id:          policy_id
+  transaction_date:   txn_date
+  effective_date:     eff_date
+  transaction_type:   txn_type            # NB | RN | EN | XL | CN | FL
+  written_premium:    wrt_prem
+  written_exposure:   wrt_exposure
+  line_of_business:   lob_code
+  territory:          terr_code
+  class_code:         class_code
+
+# ---------------------------------------------------------------------------
+# Claims
+# Grain: one row per claim
+# ---------------------------------------------------------------------------
+claims:
+  claim_id:           claim_id
+  policy_id:          policy_id
+  accident_date:      loss_date
+  report_date:        report_date
+  close_date:         close_date
+  reopen_date:        reopen_date
+  coverage_code:      cov_code            # BI, PD, COMP, COLL, MED, etc.
+  line_of_business:   lob_code
+  territory:          terr_code
+  cause_of_loss:      cause_code
+  claim_status:       status              # O=Open, C=Closed, R=Reopened
+  is_catastrophe:     is_cat              # boolean / 0-1
+  cat_code:           cat_code            # event identifier
+
+# ---------------------------------------------------------------------------
+# Loss Valuations
+# Grain: one row per (claim_id, valuation_date)
+# This is the core table for triangle development.
+# ---------------------------------------------------------------------------
+valuations:
+  claim_id:           claim_id
+  valuation_date:     val_date
+  paid_loss:          paid_loss
+  case_reserve:       case_reserve
+  incurred_loss:      incurred_loss       # paid + case; compute if not present
+  paid_alae:          paid_alae
+  case_alae:          case_alae
+  paid_ulae:          paid_ulae           # optional
+  paid_count:         paid_cnt            # 1 if closed at this val date, else 0
+  open_count:         open_cnt            # 1 if open at this val date, else 0
+
+# ---------------------------------------------------------------------------
+# Coverages (by policy)
+# Grain: one row per (policy_id, coverage_code)
+# ---------------------------------------------------------------------------
+coverages:
+  policy_id:          policy_id
+  coverage_code:      cov_code
+  limit_amount:       cov_limit
+  deductible:         deductible
+  premium:            cov_prem
+  exposure:           cov_exposure
+
+# ---------------------------------------------------------------------------
+# Rate Changes
+# Used by the on-level / parallelogram premium adjustment.
+# Grain: one row per rate change filing
+# ---------------------------------------------------------------------------
+rate_changes:
+  effective_date:     eff_date
+  line_of_business:   lob_code
+  territory:          terr_code           # leave blank for statewide
+  class_code:         class_code          # leave blank for all classes
+  rate_change_pct:    rate_chg_pct        # decimal, e.g. 0.05 = +5%
+
+# ---------------------------------------------------------------------------
+# Expenses
+# Grain: one row per (year, expense_type)
+# ---------------------------------------------------------------------------
+expenses:
+  calendar_year:      cal_year
+  line_of_business:   lob_code
+  expense_type:       exp_type            # ALAE | ULAE | Other Acq | Gen & Admin
+  amount:             exp_amount
+  written_premium:    wrt_prem            # for ratio calculation
+  earned_premium:     ern_prem

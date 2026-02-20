@@ -1,0 +1,97 @@
+# =============================================================================
+# auto_actuary — Actuarial Assumptions & Parameters
+# =============================================================================
+# These are the levers actuaries pull.  Everything here can be overridden
+# programmatically at the session or analysis level.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Triangle / Development settings
+# ---------------------------------------------------------------------------
+triangles:
+  default_origin_basis: accident_year    # accident_year | policy_year | report_year
+  default_dev_step_months: 12            # 12 = annual, 3 = quarterly
+  default_value_type: incurred_loss      # incurred_loss | paid_loss | paid_count
+  # LDF averaging methods to show in exhibits
+  ldf_methods:
+    - volume_weighted_all
+    - volume_weighted_5yr
+    - volume_weighted_3yr
+    - simple_average_5yr
+    - simple_average_3yr
+    - medial_5yr_x1               # drop high/low then average
+  # Selected LDF method per age — override per LOB in assumptions
+  selected_ldf_method: volume_weighted_5yr
+  # Tail method: curve_fit | industry | user_specified
+  tail_method: curve_fit
+  tail_fit_curve: inverse_power           # inverse_power | exponential
+  tail_threshold: 1.005                  # tail = 1.000 when fitted tail < this
+
+# ---------------------------------------------------------------------------
+# Reserve / IBNR settings
+# ---------------------------------------------------------------------------
+reserves:
+  primary_method: bornhuetter_ferguson    # chain_ladder | bornhuetter_ferguson | cape_cod | benktander
+  supplemental_method: chain_ladder
+  # For B-F: source of Expected Loss Ratio (ELR)
+  elr_source: cape_cod                   # cape_cod | user_specified | actuarial_judgment
+  # For user_specified ELR, set per LOB under lines_of_business.yaml
+  discount_rate: 0.0                     # 0 = undiscounted (most SAP reserving)
+  include_alae: true
+  include_ulae: false                    # typically loaded separately
+
+# ---------------------------------------------------------------------------
+# Ratemaking settings
+# ---------------------------------------------------------------------------
+ratemaking:
+  # Trend
+  trend_method: log_linear               # log_linear | simple_average | exponential
+  loss_trend_period_years: 3.0           # period over which to measure trend
+  premium_trend_period_years: 1.0
+  # On-level premium adjustment
+  on_level_method: parallelogram         # parallelogram | extension_of_exposures
+  # Target profit
+  target_profit_margin: 0.05            # 5% of premium
+  # Expense assumption defaults (override per LOB)
+  variable_expense_ratio: 0.25          # commissions, taxes, fees
+  fixed_expense_ratio: 0.05             # general & admin
+  # Credibility
+  credibility_method: classical         # classical | buehlmann | full
+  full_credibility_claims: 1082          # FCAS standard: Z=1.0 at 1082 claims (±5%, 90% CI)
+
+# ---------------------------------------------------------------------------
+# Frequency / Severity analysis
+# ---------------------------------------------------------------------------
+frequency_severity:
+  exposure_basis: earned                  # earned | written
+  trend_periods: [1, 3, 5]              # years to show in trend table
+  fit_distribution: false               # fit a severity distribution
+  # severity_distribution: lognormal    # lognormal | gamma | pareto
+
+# ---------------------------------------------------------------------------
+# Catastrophe analysis
+# ---------------------------------------------------------------------------
+catastrophe:
+  exclude_from_trend: true              # strip cat losses from trend selection
+  cat_loading_method: expected_value    # expected_value | simulated | benchmark
+  # expected cat load as % of non-cat premium (fallback if no cat model output)
+  cat_load_pct: 0.03
+
+# ---------------------------------------------------------------------------
+# Report settings
+# ---------------------------------------------------------------------------
+reporting:
+  company_name: "P&C Carrier"
+  logo_path: null                        # path to .png logo; null = text only
+  primary_color: "#003366"              # deep navy
+  accent_color: "#0099CC"              # teal
+  warn_color: "#E8A000"               # amber
+  danger_color: "#CC2200"             # red
+  output_dir: ./output
+  excel_theme: professional            # professional | minimal
+  # Default currency / number formats
+  currency_symbol: "$"
+  thousands_separator: true
+  decimal_places_losses: 0
+  decimal_places_ratios: 3
+  decimal_places_ldfs: 4

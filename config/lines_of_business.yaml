@@ -1,0 +1,108 @@
+# =============================================================================
+# auto_actuary — Lines of Business Definitions
+# =============================================================================
+# Define each LOB active at your carrier.  These drive labeling, grouping,
+# and LOB-specific actuarial parameters.
+# =============================================================================
+
+lines_of_business:
+
+  PPA:
+    label: Personal Private Passenger Auto
+    short: PPA
+    group: Personal Auto
+    exposure_unit: car-year
+    coverages: [BI, PD, COMP, COLL, MED, PIP, UM, UIM]
+    cat_exposed: false
+    elr_user_specified: null        # set to decimal if elr_source: user_specified
+
+  HO:
+    label: Homeowners
+    short: HO
+    group: Personal Property
+    exposure_unit: house-year
+    coverages: [DWELLING, CONTENTS, LIABILITY, MED_PAYMENTS, ADD_LIVING]
+    cat_exposed: true
+    elr_user_specified: null
+
+  DP:
+    label: Dwelling Fire / Landlord
+    short: DP
+    group: Personal Property
+    exposure_unit: house-year
+    coverages: [DWELLING, LIABILITY]
+    cat_exposed: true
+    elr_user_specified: null
+
+  CA:
+    label: Commercial Auto
+    short: CA
+    group: Commercial Lines
+    exposure_unit: vehicle-year
+    coverages: [BI, PD, COMP, COLL, MED, UM]
+    cat_exposed: false
+    elr_user_specified: null
+
+  CMP:
+    label: Commercial Multi-Peril
+    short: CMP
+    group: Commercial Lines
+    exposure_unit: policy
+    coverages: [BUILDING, CONTENTS, BI_PROP, CGL]
+    cat_exposed: true
+    elr_user_specified: null
+
+  GL:
+    label: Commercial General Liability
+    short: GL
+    group: Commercial Lines
+    exposure_unit: policy
+    coverages: [OCC, PRODUCTS, PI]
+    cat_exposed: false
+    elr_user_specified: null
+
+  WC:
+    label: Workers Compensation
+    short: WC
+    group: Commercial Lines
+    exposure_unit: payroll-100
+    coverages: [MEDICAL, INDEMNITY]
+    cat_exposed: false
+    elr_user_specified: null
+
+# ---------------------------------------------------------------------------
+# Coverage code descriptions
+# ---------------------------------------------------------------------------
+coverage_codes:
+  BI:           Bodily Injury Liability
+  PD:           Property Damage Liability
+  COMP:         Comprehensive (Other Than Collision)
+  COLL:         Collision
+  MED:          Medical Payments
+  PIP:          Personal Injury Protection
+  UM:           Uninsured Motorist
+  UIM:          Underinsured Motorist
+  DWELLING:     Dwelling / Structure
+  CONTENTS:     Personal Property / Contents
+  LIABILITY:    Personal Liability
+  ADD_LIVING:   Additional Living Expense
+  BUILDING:     Commercial Building
+  BI_PROP:      Business Interruption
+  CGL:          Commercial General Liability
+  OCC:          Occurrence Liability
+  PRODUCTS:     Products & Completed Operations
+  PI:           Professional & Personal Injury
+  MEDICAL:      WC Medical
+  INDEMNITY:    WC Indemnity
+
+# ---------------------------------------------------------------------------
+# Transaction type codes
+# ---------------------------------------------------------------------------
+transaction_types:
+  NB:  New Business
+  RN:  Renewal
+  EN:  Endorsement
+  XL:  Cancellation (Flat)
+  CN:  Cancellation (Pro-Rata)
+  FL:  Flat Cancellation Rewrite
+  RE:  Reinstatement

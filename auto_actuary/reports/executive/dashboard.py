@@ -168,7 +168,14 @@ class ExecDashboard:
 
         # KPI grid
         kpi_html = '<div class="kpi-grid">'
-        kpi_html += _kpi_card("Written Premium", _fmt_m(kpis.get("written_premium", 0)), "Current Year")
+        wp_yoy = kpis.get("wp_yoy_growth")
+        wp_delta = f"{wp_yoy:+.1%} vs prior year" if wp_yoy is not None else ""
+        # "down" = green in CSS (designed for loss ratios); invert for premium (growth = good)
+        wp_delta_dir = ("down" if wp_yoy >= 0 else "up") if wp_yoy is not None else ""
+        kpi_html += _kpi_card(
+            "Written Premium", _fmt_m(kpis.get("written_premium", 0)), "Current Year",
+            delta=wp_delta, delta_dir=wp_delta_dir,
+        )
         kpi_html += _kpi_card("Earned Premium", _fmt_m(kpis.get("earned_premium", 0)), "Current Year")
         lr = kpis.get("incurred_loss_ratio", np.nan)
         lr_class = "danger" if (not np.isnan(lr) and lr > 0.75) else ("warn" if not np.isnan(lr) and lr > 0.65 else "good")
@@ -176,6 +183,9 @@ class ExecDashboard:
         cr = kpis.get("combined_ratio", np.nan)
         cr_class = "danger" if (not np.isnan(cr) and cr > 1.05) else ("warn" if not np.isnan(cr) and cr > 0.98 else "good")
         kpi_html += f'<div class="kpi-card {cr_class}"><div class="kpi-label">Combined Ratio</div><div class="kpi-value">{_fmt_pct(cr) if not np.isnan(cr) else "N/A"}</div><div class="kpi-sub">Current Year</div></div>'
+        exp_ratio = kpis.get("expense_ratio", np.nan)
+        er_class = "danger" if (not np.isnan(exp_ratio) and exp_ratio > 0.35) else ("warn" if not np.isnan(exp_ratio) and exp_ratio > 0.30 else "good")
+        kpi_html += f'<div class="kpi-card {er_class}"><div class="kpi-label">Expense Ratio</div><div class="kpi-value">{_fmt_pct(exp_ratio) if not np.isnan(exp_ratio) else "N/A"}</div><div class="kpi-sub">Expenses / Earned Premium</div></div>'
         ibnr = kpis.get("total_ibnr", np.nan)
         kpi_html += _kpi_card("IBNR Reserve", _fmt_m(ibnr) if not np.isnan(ibnr) else "N/A", "All Open Years")
         rate_ind = kpis.get("rate_indication", np.nan)
@@ -269,6 +279,14 @@ class ExecDashboard:
             out["written_premium"] = float(pol_ly["written_premium"].sum())
             ep_col = "earned_premium" if "earned_premium" in pol_ly.columns else "written_premium"
             out["earned_premium"] = float(pol_ly[ep_col].sum())
+            # Year-over-year written premium growth
+            prior_yr = latest_yr - 1
+            pol_py = pol[pol["year"] == prior_yr]
+            if not pol_py.empty:
+                prior_wp = float(pol_py["written_premium"].sum())
+                if prior_wp != 0:
+                    out["wp_yoy_growth"] = (out["written_premium"] - prior_wp) / abs(prior_wp)
+            out["latest_year"] = int(latest_yr)
 
         # Loss ratio
         if "claims" in loader and "valuations" in loader:
@@ -286,6 +304,19 @@ class ExecDashboard:
             ind = self._safe(lambda: self.session.rate_indication(lob=self.lob).compute())
             if ind:
                 out["rate_indication"] = float(ind.indicated_change)
+
+        # Expense ratio from expenses table
+        if "expenses" in loader:
+            exp = loader["expenses"].copy()
+            if self.lob:
+                exp = exp[exp["line_of_business"] == self.lob]
+            latest_yr = out.get("latest_year")
+            if latest_yr:
+                exp = exp[exp["calendar_year"] == latest_yr]
+            total_exp = float(exp["amount"].sum())
+            ep = out.get("earned_premium", 0)
+            if ep and ep != 0:
+                out["expense_ratio"] = total_exp / ep
 
         return out
 

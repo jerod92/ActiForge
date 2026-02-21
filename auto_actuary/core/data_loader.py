@@ -41,10 +41,10 @@ _DATE_COLS: Dict[str, list[str]] = {
 
 # Required canonical columns per table (loader warns if missing)
 _REQUIRED_COLS: Dict[str, list[str]] = {
-    "policies": ["policy_id", "effective_date", "expiration_date", "written_premium", "line_of_business"],
+    "policies": ["policy_id", "written_date", "effective_date", "expiration_date", "written_premium", "line_of_business"],
     "transactions": ["transaction_id", "policy_id", "transaction_date", "transaction_type", "written_premium"],
-    "claims": ["claim_id", "policy_id", "accident_date", "coverage_code", "claim_status"],
-    "valuations": ["claim_id", "valuation_date", "paid_loss", "incurred_loss"],
+    "claims": ["claim_id", "policy_id", "accident_date", "report_date", "coverage_code", "claim_status"],
+    "valuations": ["claim_id", "valuation_date", "paid_loss", "case_reserve", "incurred_loss"],
     "rate_changes": ["effective_date", "line_of_business", "rate_change_pct"],
     "expenses": ["calendar_year", "line_of_business", "expense_type", "amount"],
 }

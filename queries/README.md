@@ -43,9 +43,12 @@ session.load_sql("valuations", open("queries/valuations.sql").read(), engine)
 | `sub_line`         | string    | no       | Sub-classification |
 | `territory`        | string    | YES      | State/territory code |
 | `class_code`       | string    | YES      | Underwriting class |
+| `transaction_type` | string    | YES      | NB, RN, EN, XL, CN, RE |
 | `written_premium`  | float     | YES      | Written premium for this term |
 | `written_exposure` | float     | YES      | Exposure units (car-years, etc.) |
-| `transaction_type` | string    | YES      | NB, RN, EN, XL, CN, RE |
+| `exposure_unit`    | string    | no       | Label for exposure unit (e.g. "car-year", "house-year") |
+| `risk_id`          | string    | no       | Insured/risk identifier for risk-level grouping |
+| `agent_id`         | string    | no       | Agent/producer code |
 
 ---
 
@@ -63,6 +66,7 @@ session.load_sql("valuations", open("queries/valuations.sql").read(), engine)
 | `written_exposure` | float  | no       | Exposure delta |
 | `line_of_business` | string | YES      | LOB code |
 | `territory`        | string | no       | Territory code |
+| `class_code`       | string | no       | Underwriting class (for class-level ratemaking) |
 
 ---
 
@@ -76,6 +80,7 @@ session.load_sql("valuations", open("queries/valuations.sql").read(), engine)
 | `accident_date`    | date    | YES      | Date of loss |
 | `report_date`      | date    | YES      | Date claim was first reported |
 | `close_date`       | date    | no       | Date closed (null if open) |
+| `reopen_date`      | date    | no       | Date reopened (null if never reopened) |
 | `coverage_code`    | string  | YES      | BI, PD, COMP, COLL, MED, etc. |
 | `line_of_business` | string  | YES      | LOB code |
 | `territory`        | string  | no       | Territory of loss |
@@ -99,11 +104,12 @@ year-end snapshots (12/31/2018, 12/31/2019, …).
 | `valuation_date`   | date   | YES      | Snapshot date |
 | `paid_loss`        | float  | YES      | Cumulative paid losses |
 | `case_reserve`     | float  | YES      | Outstanding case reserve |
-| `incurred_loss`    | float  | no       | paid + case (computed if absent) |
+| `incurred_loss`    | float  | no       | paid + case (auto-computed from paid_loss + case_reserve if absent) |
 | `paid_alae`        | float  | no       | Cumulative paid ALAE |
 | `case_alae`        | float  | no       | Case ALAE reserve |
-| `paid_count`       | int    | no       | 1 if closed at this eval, else 0 |
-| `open_count`       | int    | no       | 1 if open at this eval, else 0 |
+| `paid_ulae`        | float  | no       | Cumulative paid ULAE (unallocated loss adjustment expenses) |
+| `paid_count`       | int    | no       | 1 if closed at this eval date, else 0 (aggregates to cumulative paid count) |
+| `open_count`       | int    | no       | 1 if open at this eval date, else 0 (aggregates to open count) |
 
 **SQL template:**
 ```sql
@@ -156,10 +162,28 @@ ORDER BY
 |---------------------|--------|----------|-------------|
 | `calendar_year`     | int    | YES      | Calendar year |
 | `line_of_business`  | string | YES      | LOB code |
-| `expense_type`      | string | YES      | Commissions, Taxes, G&A, ULAE, ALAE |
+| `expense_type`      | string | YES      | `ALAE` \| `ULAE` \| `Other Acq` \| `Gen & Admin` |
 | `amount`            | float  | YES      | Expense amount |
 | `written_premium`   | float  | no       | WP denominator for ratio |
 | `earned_premium`    | float  | no       | EP denominator for ratio |
+
+---
+
+### 7. `coverages`
+**Grain:** One row per (policy_id, coverage_code)
+
+This optional table provides coverage-level detail (limits, deductibles, premiums) for
+policies that carry multiple coverages.  Used to break down loss ratios and rate indications
+by coverage part.
+
+| Canonical Column   | Type   | Required | Description |
+|--------------------|--------|----------|-------------|
+| `policy_id`        | string | YES      | Links to policies |
+| `coverage_code`    | string | YES      | BI, PD, COMP, COLL, MED, etc. |
+| `limit_amount`     | float  | no       | Per-occurrence or per-accident limit |
+| `deductible`       | float  | no       | Deductible amount |
+| `premium`          | float  | no       | Premium allocated to this coverage |
+| `exposure`         | float  | no       | Exposure allocated to this coverage |
 
 ---
 

@@ -345,6 +345,247 @@ class ActuarySession:
         return exhibit.render(output_path=output_path, fmt=fmt)
 
     # ------------------------------------------------------------------
+    # Speculative / scenario analysis
+    # ------------------------------------------------------------------
+
+    def build_segment_df(
+        self,
+        lob: Optional[str] = None,
+        by: Optional[list[str]] = None,
+        value: str = "incurred_loss",
+    ) -> pd.DataFrame:
+        """
+        Build a segment-level DataFrame suitable for ScenarioEngine.
+
+        Aggregates claims, valuations, and policies data into a flat table
+        at (accident_year × territory × class_code × coverage_code) grain.
+
+        Parameters
+        ----------
+        lob : str, optional
+            Filter to a single line of business.
+        by : list of str, optional
+            Additional grouping dimensions beyond accident_year.
+            Default: ['territory', 'class_code', 'coverage_code'].
+        value : str
+            Loss column to aggregate.  Default 'incurred_loss'.
+
+        Returns
+        -------
+        DataFrame suitable for passing to ScenarioEngine and CompoundGLM.
+        """
+        by = by or ["territory", "class_code", "coverage_code"]
+        group_cols = ["accident_year"] + [c for c in by if c != "accident_year"]
+
+        # Claims + latest valuations
+        claims = self.loader["claims"].copy() if "claims" in self.loader.loaded_tables else pd.DataFrame()
+        vals = self.loader["valuations"].copy() if "valuations" in self.loader.loaded_tables else pd.DataFrame()
+        policies = self.loader["policies"].copy() if "policies" in self.loader.loaded_tables else pd.DataFrame()
+
+        if claims.empty or vals.empty:
+            raise ValueError(
+                "Cannot build segment_df without 'claims' and 'valuations' loaded. "
+                "Call session.load_csv('claims', ...) and session.load_csv('valuations', ...) first."
+            )
+
+        # Filter by LOB
+        if lob and "line_of_business" in claims.columns:
+            claims = claims[claims["line_of_business"] == lob].copy()
+        if lob and not policies.empty and "line_of_business" in policies.columns:
+            policies = policies[policies["line_of_business"] == lob].copy()
+
+        # Accident year
+        if "accident_date" in claims.columns:
+            claims["accident_year"] = claims["accident_date"].dt.year
+
+        # Latest valuation per claim
+        if "valuation_date" in vals.columns and "claim_id" in vals.columns:
+            latest_vals = (
+                vals.sort_values("valuation_date")
+                .groupby("claim_id")
+                .last()
+                .reset_index()[["claim_id", value, "paid_loss"]]
+            ) if value in vals.columns else pd.DataFrame()
+            if not latest_vals.empty:
+                claims = claims.merge(latest_vals, on="claim_id", how="left")
+
+        claims[value] = claims.get(value, pd.Series(0, index=claims.index)).fillna(0)
+        claims["claim_count"] = 1
+
+        avail_group = [c for c in group_cols if c in claims.columns]
+        agg_cols = {value: "sum", "claim_count": "sum"}
+        if "is_catastrophe" in claims.columns:
+            agg_cols["is_catastrophe"] = "max"
+
+        loss_df = claims.groupby(avail_group).agg(**{
+            k: pd.NamedAgg(column=col if col in claims.columns else k, aggfunc=fn)
+            for k, (col, fn) in {
+                "incurred_loss": (value, "sum"),
+                "claim_count": ("claim_count", "sum"),
+            }.items()
+        }).reset_index()
+
+        if "is_catastrophe" in claims.columns:
+            cat_df = claims.groupby(avail_group)["is_catastrophe"].max().reset_index()
+            loss_df = loss_df.merge(cat_df, on=avail_group, how="left")
+
+        # Exposure and premium from policies
+        if not policies.empty and "effective_date" in policies.columns:
+            policies["accident_year"] = policies["effective_date"].dt.year
+            exp_group = [c for c in avail_group if c in policies.columns]
+            exp_agg = {}
+            if "written_exposure" in policies.columns:
+                exp_agg["earned_exposure"] = pd.NamedAgg("written_exposure", "sum")
+            if "written_premium" in policies.columns:
+                exp_agg["written_premium"] = pd.NamedAgg("written_premium", "sum")
+            if exp_agg:
+                exp_df = policies.groupby(exp_group).agg(**exp_agg).reset_index()
+                loss_df = loss_df.merge(exp_df, on=[c for c in exp_group if c in loss_df.columns], how="left")
+
+        loss_df["incurred_loss"] = loss_df.get("incurred_loss", pd.Series(0)).fillna(0)
+        loss_df["claim_count"] = loss_df.get("claim_count", pd.Series(0)).fillna(0)
+
+        return loss_df
+
+    def scenario_engine(
+        self,
+        lob: Optional[str] = None,
+        by: Optional[list[str]] = None,
+        expense_ratio: float = 0.30,
+        fit_glm: bool = False,
+    ) -> "auto_actuary.analytics.speculative.scenario_engine.ScenarioEngine":  # type: ignore[name-defined]
+        """
+        Build a ScenarioEngine from loaded session data.
+
+        Parameters
+        ----------
+        lob : str, optional
+            Line of business to filter to.
+        by : list of str, optional
+            Segment grouping dimensions.
+        expense_ratio : float
+            Portfolio expense ratio for combined ratio calculations.
+        fit_glm : bool
+            If True, fit a CompoundGLM to the segment data and attach it
+            to the engine for GLM-assisted scenario analysis.
+
+        Returns
+        -------
+        ScenarioEngine
+
+        Example
+        -------
+        >>> engine = session.scenario_engine(lob="PPA", expense_ratio=0.28)
+        >>> scenario = rate_action_scenario("Rate +8% SE", "territory", {"SOUTHEAST": 0.08})
+        >>> result = engine.run_scenario(scenario)
+        >>> print(result.summary_table())
+        """
+        from auto_actuary.analytics.speculative.scenario_engine import ScenarioEngine
+        from auto_actuary.analytics.speculative.glm_models import fit_compound_glm_from_segments
+
+        seg_df = self.build_segment_df(lob=lob, by=by)
+
+        glm = None
+        if fit_glm:
+            cat_cols = [c for c in ["territory", "class_code", "coverage_code"] if c in seg_df.columns]
+            cont_cols = [c for c in ["accident_year"] if c in seg_df.columns]
+            try:
+                glm = fit_compound_glm_from_segments(
+                    seg_df,
+                    cat_cols=cat_cols,
+                    cont_cols=cont_cols,
+                )
+                logger.info("ScenarioEngine: CompoundGLM fitted — %r", glm)
+            except Exception as e:
+                logger.warning("ScenarioEngine: GLM fitting failed (%s); continuing without GLM", e)
+
+        return ScenarioEngine(segment_df=seg_df, glm=glm, expense_ratio=expense_ratio)
+
+    def scenario_report(
+        self,
+        scenarios: list,
+        output_path: Union[str, Path] = "output/scenario_analysis.html",
+        lob: Optional[str] = None,
+        expense_ratio: float = 0.30,
+        horizon_years: int = 3,
+        run_stress_test: bool = True,
+        n_stress_sims: int = 500,
+        n_boot_ci: int = 0,
+    ) -> Path:
+        """
+        Run scenarios and render a self-contained HTML scenario report.
+
+        Parameters
+        ----------
+        scenarios : list of ScenarioParams
+            Scenarios to compare.
+        output_path : str or Path
+            Output HTML file path.
+        lob : str, optional
+            Line of business filter.
+        expense_ratio : float
+            Portfolio expense ratio for CR calculation.
+        horizon_years : int
+            Trend projection horizon.
+        run_stress_test : bool
+            Include a Monte Carlo stress test distribution.
+        n_stress_sims : int
+            Number of stress test simulations.
+        n_boot_ci : int
+            Bootstrap iterations for CI on scenario KPIs.
+            0 = parametric CI approximation (fast).
+
+        Returns
+        -------
+        Path to the rendered HTML file.
+
+        Example
+        -------
+        >>> from auto_actuary.analytics.speculative import (
+        ...     rate_action_scenario, frequency_stress_scenario
+        ... )
+        >>> scenarios = [
+        ...     rate_action_scenario("Rate +10% all", "all", {"all": 0.10}),
+        ...     frequency_stress_scenario("Freq trend 5%/yr", 0.05, horizon_years=3),
+        ... ]
+        >>> session.scenario_report(scenarios, output_path="output/exec_scenarios.html")
+        """
+        from auto_actuary.analytics.speculative.scenario_engine import ScenarioEngine
+        from auto_actuary.analytics.speculative.trend_projector import build_trend_projectors
+        from auto_actuary.reports.executive.scenario_report import ScenarioReport
+
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        engine = self.scenario_engine(lob=lob, expense_ratio=expense_ratio)
+        results = [engine.run_scenario(sp, n_boot=n_boot_ci) for sp in scenarios]
+
+        # Build trend projectors from F/S analysis
+        trend_projectors = {}
+        try:
+            fs = self.freq_severity(lob=lob or "")
+            fs_tbl = fs.fs_table().reset_index()
+            if "accident_year" in fs_tbl.columns:
+                trend_projectors = build_trend_projectors(
+                    fs_tbl, year_col="accident_year", n_boot=200
+                )
+        except Exception as e:
+            logger.debug("Could not build trend projectors: %s", e)
+
+        stress_df = None
+        if run_stress_test:
+            stress_df = engine.stress_test(n_simulations=n_stress_sims)
+
+        report = ScenarioReport(
+            engine=engine,
+            results=results,
+            trend_projectors=trend_projectors,
+            stress_df=stress_df,
+            lob=lob or "",
+            horizon_years=horizon_years,
+        )
+        return report.render(output_path=output_path)
+
+    # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
 

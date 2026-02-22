@@ -38,7 +38,8 @@ policies:
   sub_line:           sub_line            # optional sub-classification
   territory:          terr_code           # state / territory code
   class_code:         class_code          # underwriting class
-  transaction_type:   txn_type            # NB, RN, EN, XL, CN, RE
+  # transaction_type belongs in the transactions table, not policies.
+  # The policies query joins transactions only to obtain base premium/exposure.
   risk_id:            insured_id
   agent_id:           agent_code
   written_premium:    wrt_prem

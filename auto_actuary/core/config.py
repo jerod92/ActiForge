@@ -9,7 +9,6 @@ The assumptions hold all actuarial parameters (LDF methods, trend, expenses…).
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 

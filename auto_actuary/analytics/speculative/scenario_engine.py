@@ -349,6 +349,11 @@ class ScenarioEngine:
         current_year: Optional[int] = None,
     ) -> None:
         self._df = segment_df.copy()
+        # Ensure numeric columns are float — scenario transforms apply fractional
+        # multipliers (elasticity, trend factors) that produce non-integer values.
+        for col in ["claim_count", "earned_exposure", "incurred_loss", "written_premium"]:
+            if col in self._df.columns:
+                self._df[col] = self._df[col].astype(float)
         self.glm = glm
         self.expense_ratio = expense_ratio
 

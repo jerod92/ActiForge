@@ -389,7 +389,7 @@ class IRPMAnalysis:
 
         # Gini = 2 × (area under Lorenz curve - 0.5)
         # Use trapezoidal integration
-        area = float(np.trapz(cum_loss.values, cum_prem.values))
+        area = float(np.trapezoid(cum_loss.values, cum_prem.values))
         return float(2 * area - 1)
 
     # ------------------------------------------------------------------

@@ -4,6 +4,12 @@
 -- REQUIRED OUTPUT: One row per policy term
 -- =============================================================================
 
+-- NOTE: transaction_type (txn_type) is NOT selected here because this query
+-- is scoped to one row per policy term.  Transaction-type detail lives in the
+-- transactions query (see queries/transactions.sql.example).  The LEFT JOIN to
+-- policy_transactions is used only to pull the base written premium and exposure
+-- from the originating transaction (NB or RN).
+
 SELECT
     p.policy_id                                          AS policy_id,
     p.policy_number                                      AS policy_number,
@@ -19,13 +25,12 @@ SELECT
     p.agent_code                                         AS agent_code,
     COALESCE(t.written_premium, p.policy_premium, 0)    AS wrt_prem,
     COALESCE(t.written_exposure, 1.0)                    AS wrt_exposure,
-    p.exposure_unit_label                                AS exp_unit,
-    t.transaction_type_code                              AS txn_type
+    p.exposure_unit_label                                AS exp_unit
 FROM
     your_schema.policies p
     LEFT JOIN your_schema.policy_transactions t
         ON t.policy_id = p.policy_id
-        AND t.transaction_type_code IN ('NB', 'RN')  -- base transactions only
+        AND t.transaction_type_code IN ('NB', 'RN')  -- pull base-term premium/exposure only
 WHERE
     p.effective_date >= '2015-01-01'
 ORDER BY

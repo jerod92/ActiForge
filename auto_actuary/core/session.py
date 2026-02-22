@@ -586,6 +586,209 @@ class ActuarySession:
         return report.render(output_path=output_path)
 
     # ------------------------------------------------------------------
+    # Time series
+    # ------------------------------------------------------------------
+
+    def time_series_manager(self) -> "auto_actuary.analytics.time_series.manager.TimeSeriesManager":  # type: ignore[name-defined]
+        """
+        Return a TimeSeriesManager pre-loaded with the current session snapshot.
+
+        Call add_snapshot() on the returned manager to register additional
+        point-in-time snapshots and then use metric_series(), period_change(),
+        cagr(), and trend_fit() for historical / time-series analysis.
+
+        Example
+        -------
+        >>> ts = session.time_series_manager()
+        >>> ts.add_snapshot("2022-12-31", {"policies": df_22, "claims": df_22c})
+        >>> ts.add_snapshot("2023-12-31", {"policies": df_23, "claims": df_23c})
+        >>> lr_series = ts.metric_series("loss_ratio", lambda dt, s: ...)
+        >>> ts.trend_fit(lr_series)
+        """
+        from auto_actuary.analytics.time_series.manager import TimeSeriesManager, SnapshotStore
+
+        store = SnapshotStore(name="session")
+        # Seed with the currently loaded tables as the "latest" snapshot
+        tables = {t: self.loader[t] for t in self.loader.loaded_tables}
+        if tables:
+            store.add_snapshot(pd.Timestamp.now().normalize(), tables)
+        return TimeSeriesManager(store=store)
+
+    # ------------------------------------------------------------------
+    # Market breakdown
+    # ------------------------------------------------------------------
+
+    def market_breakdown(
+        self,
+        config: "auto_actuary.analytics.portfolio.market_breakdown.MarketBreakdownConfig",  # type: ignore[name-defined]
+        as_of_year: Optional[int] = None,
+    ) -> "auto_actuary.analytics.portfolio.market_breakdown.MarketBreakdownAnalysis":  # type: ignore[name-defined]
+        """
+        Apply a custom market breakdown configuration to loaded data.
+
+        Parameters
+        ----------
+        config : MarketBreakdownConfig
+            Hierarchical segment definition built via MarketBreakdownConfig.from_dict().
+        as_of_year : int, optional
+            Filter policies and claims to a single effective / accident year.
+
+        Example
+        -------
+        >>> from auto_actuary.analytics.portfolio import MarketBreakdownConfig
+        >>> cfg = MarketBreakdownConfig.from_dict({
+        ...     "Personal Lines": {
+        ...         "Preferred Auto": {"line_of_business": "PPA", "class_code": ["P1", "P2"]},
+        ...         "Non-Standard":   {"line_of_business": "PPA", "class_code": ["NS"]},
+        ...     },
+        ...     "Commercial Lines": {"line_of_business": ["CA", "GL", "CMP"]},
+        ... })
+        >>> mba = session.market_breakdown(cfg)
+        >>> mba.by_group()
+        >>> mba.by_subgroup()
+        """
+        from auto_actuary.analytics.portfolio.market_breakdown import MarketBreakdownAnalysis
+
+        return MarketBreakdownAnalysis.from_session(session=self, config=config, as_of_year=as_of_year)
+
+    # ------------------------------------------------------------------
+    # Cause of loss
+    # ------------------------------------------------------------------
+
+    def cause_of_loss(
+        self,
+        lob: Optional[str] = None,
+        exclude_cat: bool = False,
+    ) -> "auto_actuary.analytics.cause_of_loss.analysis.CauseOfLossAnalysis":  # type: ignore[name-defined]
+        """
+        Cause-of-loss frequency / severity / pure-premium analysis.
+
+        Requires the claims table to have a ``cause_code`` column
+        (mapped from cause_of_loss in schema.yaml).
+
+        Parameters
+        ----------
+        lob : str, optional
+            Filter to a single LOB.
+        exclude_cat : bool
+            Exclude catastrophe losses (requires is_catastrophe column in claims).
+        """
+        from auto_actuary.analytics.cause_of_loss.analysis import CauseOfLossAnalysis
+
+        return CauseOfLossAnalysis.from_session(session=self, lob=lob, exclude_cat=exclude_cat)
+
+    def cause_of_loss_correlations(
+        self,
+        lob: Optional[str] = None,
+    ) -> "auto_actuary.analytics.cause_of_loss.analysis.CauseOfLossCorrelation":  # type: ignore[name-defined]
+        """
+        Statistical association (Cramér's V) between cause of loss and
+        other categorical dimensions (territory, coverage, class, etc.).
+
+        Parameters
+        ----------
+        lob : str, optional
+            Filter to a single LOB.
+        """
+        from auto_actuary.analytics.cause_of_loss.analysis import CauseOfLossCorrelation
+
+        return CauseOfLossCorrelation.from_session(session=self, lob=lob)
+
+    # ------------------------------------------------------------------
+    # Retention
+    # ------------------------------------------------------------------
+
+    def retention_analysis(
+        self,
+        lob: Optional[str] = None,
+    ) -> "auto_actuary.analytics.retention.retention.RetentionAnalysis":  # type: ignore[name-defined]
+        """
+        Account and policy retention analysis.
+
+        Computes:
+          - Policy retention rate by expiration year (and optional segments)
+          - Account retention rate by policy year
+          - Profitability lift between renewed and lapsed policies
+
+        Requires: policies loaded.  Optional: transactions, claims, valuations.
+
+        Parameters
+        ----------
+        lob : str, optional
+            Filter to a single LOB.
+        """
+        from auto_actuary.analytics.retention.retention import RetentionAnalysis
+
+        return RetentionAnalysis.from_session(session=self, lob=lob)
+
+    # ------------------------------------------------------------------
+    # Product mix
+    # ------------------------------------------------------------------
+
+    def product_mix(
+        self,
+        lob: Optional[str] = None,
+    ) -> "auto_actuary.analytics.portfolio.product_mix.ProductMixAnalysis":  # type: ignore[name-defined]
+        """
+        Portfolio product-mix and concentration analysis.
+
+        Computes:
+          - Premium / exposure / policy mix by dimension (LOB, territory, class, …)
+          - Year-over-year mix shift
+          - Herfindahl–Hirschman Index (HHI) of concentration per dimension
+          - Loss ratio per product segment
+
+        Parameters
+        ----------
+        lob : str, optional
+            Filter to a single LOB (useful for within-LOB mix analysis).
+        """
+        from auto_actuary.analytics.portfolio.product_mix import ProductMixAnalysis
+
+        return ProductMixAnalysis.from_session(session=self, lob=lob)
+
+    # ------------------------------------------------------------------
+    # IRPM
+    # ------------------------------------------------------------------
+
+    def irpm_analysis(
+        self,
+        lob: Optional[str] = None,
+        target_loss_ratio: float = 0.65,
+        **kwargs: Any,
+    ) -> "auto_actuary.analytics.ratemaking.irpm.IRPMAnalysis":  # type: ignore[name-defined]
+        """
+        Individual Risk Premium Modification (IRPM) usage efficiency analysis.
+
+        Requires the policies table to contain either:
+          - ``irpm_factor``          (multiplicative modifier, e.g. 0.85)
+          - ``schedule_credit_pct``  (signed credit %, e.g. 15 = 15% credit)
+          - ``schedule_mod``         (alias for irpm_factor)
+
+        Computes:
+          - Modification factor distribution (credits vs. debits)
+          - Adequacy test: are modified premiums covering losses?
+          - Efficiency test: Gini coefficient, IRPM-vs-LR correlation
+          - Bias test by IRPM decile
+          - Segment breakdown (by territory, class, agent, etc.)
+
+        Parameters
+        ----------
+        lob : str, optional
+            Filter to a single LOB.
+        target_loss_ratio : float
+            Permissible loss ratio for the adequacy test.  Default 0.65.
+        """
+        from auto_actuary.analytics.ratemaking.irpm import IRPMAnalysis
+
+        return IRPMAnalysis.from_session(
+            session=self,
+            lob=lob,
+            target_loss_ratio=target_loss_ratio,
+            **kwargs,
+        )
+
+    # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
 

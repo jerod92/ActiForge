@@ -2,7 +2,7 @@
 
 > **FCAS-level mathematics. Executive-grade output.**
 
-A Python analytics platform for P&C insurance carriers.  Built for actuaries and
+A Python analytics platform for P&C insurance carriers. Built for actuaries and
 data scientists who need to move fast — and produce work that looks good in the boardroom.
 
 ---
@@ -14,11 +14,15 @@ auto_actuary covers the core quantitative workflows of a P&C actuarial departmen
 | Domain | Analytics | Output |
 |---|---|---|
 | **Reserving** | Chain Ladder, Bornhuetter-Ferguson, Cape Cod, Benktander | Excel exhibits, HTML reserve pages |
-| **Ratemaking** | On-level premium (parallelogram), loss trend, rate indication | Rate indication exhibit |
+| **Ratemaking** | On-level premium (parallelogram), loss trend, rate indication, IRPM | Rate indication exhibit |
 | **Development** | Triangle construction, LDF selection (6 methods × 3 periods), tail fitting | Triangle exhibit (all methods) |
 | **Freq/Severity** | F/S decomposition, log-linear trend, territorial relativities | F/S summary, trend table |
 | **Profitability** | Loss ratio (paid/incurred/ultimate), combined ratio, cohort analysis | Dashboard, LOB table |
 | **Catastrophe** | CAT vs. non-CAT split, event analysis, territory concentration, expected load | CAT summary page |
+| **Portfolio** | Market breakdown, product mix, HHI concentration, retention analysis | Segment tables, mix charts |
+| **Cause of Loss** | Cause-of-loss F/S breakdown, correlation analysis | Cause-of-loss summary |
+| **Scenario** | What-if modeling, compound GLM, multi-year trend projection, stress testing | Scenario comparison report |
+| **Time Series** | Multi-snapshot tracking, metric trends across evaluation dates | Time-series tables |
 | **Executive** | KPI cards, combined ratio trend, reserve waterfall, premium trend | Self-contained HTML dashboard |
 
 ---
@@ -55,6 +59,9 @@ auto-actuary triangle   --lob PPA
 auto-actuary reserve    --lob PPA
 auto-actuary ratemaking --lob PPA --trend-factor 1.04
 auto-actuary dashboard  --lob PPA
+
+# 4. Validate your data against the expected schema
+auto-actuary validate --data-dir data/
 ```
 
 ---
@@ -105,7 +112,16 @@ cat = session.cat_analysis(lob="PPA")
 print(cat.split_by_year())
 print(cat.expected_cat_load())
 
-# 8. Export everything
+# 8. Portfolio analysis
+mix = session.product_mix(lob="PPA")
+print(mix.summary())
+retention = session.retention_analysis(lob="PPA")
+print(retention.by_year())
+
+# 9. Scenario modeling
+report = session.scenario_report(lob="PPA", output_path="output/scenarios.html")
+
+# 10. Export everything
 session.triangle_exhibit(lob="PPA",      output_path="output/tri.xlsx")
 session.reserve_exhibit(lob="PPA",       output_path="output/res.xlsx")
 session.rate_indication_exhibit(lob="PPA", output_path="output/rate.xlsx")
@@ -136,30 +152,46 @@ auto_actuary/
 │   │
 │   ├── analytics/
 │   │   ├── triangles/
-│   │   │   ├── development.py       # LossTriangle + 6 LDF methods
-│   │   │   └── tail.py              # Tail factor fitting
+│   │   │   ├── development.py       # LossTriangle + 6 LDF methods + CDF chain
+│   │   │   └── tail.py              # Inverse power & exponential tail fitting
 │   │   ├── reserves/
 │   │   │   ├── ibnr.py              # CL, B-F, Cape Cod, Benktander
 │   │   │   └── adequacy.py          # Reserve adequacy testing
 │   │   ├── ratemaking/
 │   │   │   ├── on_level.py          # Parallelogram on-level premium
 │   │   │   ├── trend.py             # Log-linear loss/premium trend
-│   │   │   └── indicated_rate.py    # Rate indication with credibility
+│   │   │   ├── indicated_rate.py    # Rate indication with credibility
+│   │   │   └── irpm.py              # Individual Risk Premium Modification
 │   │   ├── frequency_severity/
 │   │   │   └── analysis.py          # F/S decomposition + relativities
 │   │   ├── profitability/
 │   │   │   ├── loss_ratio.py        # Paid/incurred/ultimate LR by slice
 │   │   │   ├── combined_ratio.py    # Combined ratio trend
 │   │   │   └── cohort.py            # Policy vintage profitability
-│   │   └── catastrophe/
-│   │       └── cat_analysis.py      # CAT vs. non-CAT split + event analysis
+│   │   ├── catastrophe/
+│   │   │   └── cat_analysis.py      # CAT vs. non-CAT split + event analysis
+│   │   ├── cause_of_loss/
+│   │   │   └── analysis.py          # Cause-of-loss F/S breakdown + correlation
+│   │   ├── retention/
+│   │   │   └── retention.py         # Policy/account retention rates
+│   │   ├── portfolio/
+│   │   │   ├── market_breakdown.py  # Hierarchical market segmentation
+│   │   │   └── product_mix.py       # Premium mix + HHI concentration
+│   │   ├── speculative/
+│   │   │   ├── scenario_engine.py   # What-if scenario modeling
+│   │   │   ├── glm_models.py        # Compound GLM for rate optimization
+│   │   │   ├── trend_projector.py   # Multi-year F/S trend projection
+│   │   │   └── categorical.py       # Categorical variable encoding
+│   │   └── time_series/
+│   │       └── manager.py           # Multi-snapshot time-series tracking
 │   │
 │   ├── reports/
 │   │   ├── renderers/
 │   │   │   ├── excel.py             # Styled openpyxl workbook writer
 │   │   │   └── html.py              # Plotly chart builders + table formatter
 │   │   ├── executive/
-│   │   │   └── dashboard.py         # Self-contained HTML dashboard
+│   │   │   ├── dashboard.py         # Self-contained HTML dashboard
+│   │   │   └── scenario_report.py   # Scenario comparison HTML report
 │   │   └── actuarial/
 │   │       ├── triangle_exhibit.py  # Triangle + LDF + CDF exhibit
 │   │       ├── reserve_exhibit.py   # Reserve comparison exhibit
@@ -171,9 +203,10 @@ auto_actuary/
 ├── tests/
 │   ├── fixtures/
 │   │   └── generate_sample_data.py  # Synthetic P&C data generator
-│   ├── test_triangles.py            # LDF math tests
-│   ├── test_reserves.py             # B-F / Cape Cod algebraic tests
-│   └── test_ratemaking.py           # Trend + rate indication tests
+│   ├── test_triangles.py            # LDF math + tail fitting tests
+│   ├── test_reserves.py             # B-F / Cape Cod algebraic invariant tests
+│   ├── test_ratemaking.py           # Trend + rate indication tests
+│   └── test_speculative.py          # Scenario engine + GLM tests
 │
 ├── examples/
 │   ├── 01_basic_loss_development.py
@@ -192,6 +225,8 @@ auto_actuary/
 ### `config/schema.yaml`
 
 Maps your database column names to the canonical aliases used in the codebase.
+Seven canonical tables are defined: `policies`, `transactions`, `claims`,
+`valuations`, `coverages`, `rate_changes`, and `expenses`.
 
 ```yaml
 policies:
@@ -202,7 +237,7 @@ policies:
 
 ### `config/actuarial_assumptions.yaml`
 
-Controls all actuarial parameters:
+Controls all actuarial parameters — every value is overridable programmatically:
 
 ```yaml
 triangles:
@@ -216,6 +251,19 @@ ratemaking:
 reserves:
   primary_method: bornhuetter_ferguson
   elr_source: cape_cod
+```
+
+### `config/lines_of_business.yaml`
+
+Defines LOBs, coverage codes, and transaction types:
+
+```yaml
+lines_of_business:
+  PPA:
+    label: "Personal Auto"
+    short_code: PPA
+    exposure_unit: car_year
+    coverages: [BI, PD, COMP, COLL, MED, PIP, UM, UIM]
 ```
 
 ### Loading SQL from your database
@@ -254,10 +302,19 @@ session.load_sql("valuations", open("queries/valuations.sql").read(), engine)
 | **On-Level Premium** | Parallelogram method; cumulative rate index; ARLF by year |
 | **Loss Trend** | Log-linear regression; R², p-value, Durbin-Watson; multi-period comparison |
 | **Credibility** | Classical Z = √(n/1082); credibility-weighted indication |
+| **IRPM** | Individual Risk Premium Modification; adequacy/efficiency analysis; Gini coefficient |
 | **F/S Decomposition** | Frequency/severity trend by coverage, territory, class |
 | **Relativities** | Territorial and class relativities with credibility |
 | **CAT Analysis** | Event analysis; territory concentration; expected CAT load |
+| **Cause of Loss** | Cause-of-loss F/S breakdown; inter-peril correlation |
 | **Cohort Analysis** | Policy vintage P&L; development of loss ratio over time |
+| **Retention** | Policy and account retention rates by year and segment |
+| **Portfolio Mix** | Premium/exposure mix analysis; HHI concentration index; loss ratio by segment |
+| **Market Breakdown** | Hierarchical market segmentation analysis |
+| **Scenario Modeling** | What-if rate, frequency, severity adjustments; stress testing with bootstrap CIs |
+| **Compound GLM** | GLM-based rate optimization from segment-level data |
+| **Trend Projection** | Multi-year frequency and severity trend projections |
+| **Time Series** | Multi-snapshot metric tracking across evaluation dates |
 
 ### For Executives / Management
 
@@ -271,6 +328,7 @@ session.load_sql("valuations", open("queries/valuations.sql").read(), engine)
 | **Loss Cost Trend** | Frequency and pure premium dual-axis trend |
 | **Portfolio Table** | Loss ratios by LOB, territory, or coverage |
 | **Cohort Table** | Vintage profitability — loss ratio and UW profit/loss |
+| **Scenario Report** | Side-by-side scenario comparison with combined ratio impact |
 | **Excel Exhibits** | Professionally formatted with cover page, navy/teal theme, auto-widths |
 
 ---
@@ -288,8 +346,8 @@ derivations, and CAS study note references.
 pytest tests/ -v --tb=short
 ```
 
-Tests cover LDF math, B-F/Cape Cod algebraic invariants, rate indication formula,
-trend fitting accuracy, and tail factor behavior.
+Tests cover LDF math, tail factor behavior, B-F/Cape Cod algebraic invariants,
+rate indication formula, trend fitting accuracy, and scenario engine modeling.
 
 ---
 

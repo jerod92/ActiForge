@@ -85,6 +85,12 @@ def fit_tail(
         logger.warning("Not enough LDF observations to fit tail curve — using tail = 1.0")
         return 1.0
 
+    # If all observed excess LDFs are below the threshold margin, development is
+    # indistinguishable from noise — no tail is warranted.
+    if (ldfs_clean - 1.0).max() < (threshold - 1.0):
+        logger.debug("All observed LDFs below threshold margin — tail = 1.0")
+        return 1.0
+
     # Convert LDFs to annualized log-excess over 1.0 for fitting stability
     # We fit ln(LDF - 1) ~ f(age)  which works for standard development patterns
     y = ldfs_clean - 1.0

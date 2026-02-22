@@ -330,10 +330,12 @@ class LossTriangle:
         ldfs = self._selected_ldfs.values.astype(float)
         tail = self._tail_factor
         n = len(ldfs)
-        cdfs = np.ones(n + 1)
+        # One CDF per age, plus a "tail" entry (= 1.0, already at ultimate)
+        cdfs = np.ones(n + 2)
 
-        # CDF for the last observed age = tail
+        # CDF for the last observed age = tail factor
         cdfs[n] = tail
+        # cdfs[n + 1] = 1.0 (already at ultimate)
         for i in range(n - 1, -1, -1):
             cdfs[i] = ldfs[i] * cdfs[i + 1]
 

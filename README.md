@@ -1,4 +1,4 @@
-# auto_actuary
+# ActiForge
 
 > **Actuarial mathematics. Strategic output.**
 

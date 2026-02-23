@@ -35,6 +35,58 @@ logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent.parent.parent.parent / "templates"
 
+# Plotly CDN script tag (pinned version for reproducibility)
+PLOTLY_CDN = '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>'
+
+_DASHBOARD_CSS = """
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', Inter, Arial, sans-serif; background: #F0F2F5; color: #1A1A2E; }
+.header { background: linear-gradient(135deg, #002060 0%, #004080 100%);
+           color: white; padding: 24px 40px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: 0.5px; }
+.header .meta { text-align: right; font-size: 0.85rem; opacity: 0.85; }
+.container { max-width: 1400px; margin: 0 auto; padding: 24px 32px; }
+.section-title { font-size: 1.1rem; font-weight: 600; color: #002060;
+                  border-left: 4px solid #0099CC; padding-left: 12px;
+                  margin: 28px 0 16px; }
+
+/* KPI cards */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; margin-bottom: 28px; }
+.kpi-card { background: white; border-radius: 10px; padding: 20px 22px;
+            box-shadow: 0 2px 8px rgba(0,32,96,0.10);
+            border-top: 4px solid #0099CC; }
+.kpi-card.warn { border-top-color: #E8A000; }
+.kpi-card.danger { border-top-color: #C00000; }
+.kpi-card.good { border-top-color: #375623; }
+.kpi-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: #666; }
+.kpi-value { font-size: 2rem; font-weight: 700; margin: 6px 0 4px; color: #002060; }
+.kpi-sub { font-size: 0.78rem; color: #888; }
+.kpi-delta { font-size: 0.82rem; font-weight: 600; margin-top: 6px; }
+.kpi-delta.up { color: #C00000; }
+.kpi-delta.down { color: #375623; }
+
+/* Charts */
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+.chart-grid.single { grid-template-columns: 1fr; }
+.chart-card { background: white; border-radius: 10px; padding: 20px;
+              box-shadow: 0 2px 8px rgba(0,32,96,0.08); }
+
+/* Tables */
+.aa-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.aa-table th { background: #002060; color: white; padding: 9px 12px;
+               text-align: center; font-weight: 600; letter-spacing: 0.3px; }
+.aa-table td { padding: 7px 12px; border-bottom: 1px solid #E5E9F0; }
+.aa-table td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: monospace; }
+.aa-table tbody tr:nth-child(even) { background: #F5F8FC; }
+.aa-table tbody tr:hover { background: #EEF4FF; }
+.aa-table .total-row td { background: #FFC000 !important; font-weight: 700; }
+.aa-table td.pct { color: #333; }
+.table-card { background: white; border-radius: 10px; padding: 20px;
+              box-shadow: 0 2px 8px rgba(0,32,96,0.08); margin-bottom: 20px; overflow-x: auto; }
+.footer { text-align: center; padding: 20px; color: #999; font-size: 0.78rem; margin-top: 20px; }
+@media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
+"""
+
 
 # ---------------------------------------------------------------------------
 # Chart builders

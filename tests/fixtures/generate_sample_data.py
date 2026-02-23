@@ -223,6 +223,26 @@ def generate_rate_changes() -> pd.DataFrame:
     return pd.DataFrame(RATE_CHANGES)
 
 
+def generate_transactions(policies: pd.DataFrame) -> pd.DataFrame:
+    """Generate a flat transactions table derived from the policies DataFrame."""
+    records = []
+    tid = 1
+    for _, pol in policies.iterrows():
+        records.append({
+            "transaction_id":   tid,
+            "policy_id":        pol["policy_id"],
+            "transaction_date": pol["written_date"],
+            "effective_date":   pol["eff_date"],
+            "transaction_type": pol["txn_type"],
+            "written_premium":  pol["wrt_prem"],
+            "lob_code":         pol["lob_code"],
+            "terr_code":        pol["terr_code"],
+            "class_code":       pol["class_code"],
+        })
+        tid += 1
+    return pd.DataFrame(records)
+
+
 def generate_expenses(policies: pd.DataFrame) -> pd.DataFrame:
     records = []
     for yr in YEARS:
@@ -260,6 +280,10 @@ def generate_all(output_dir: str = "data", n_per_year: int = 500) -> dict[str, P
     print(f"  claims.csv: {len(claims):,} rows")
     print(f"  valuations.csv: {len(valuations):,} rows")
 
+    transactions = generate_transactions(policies)
+    transactions.to_csv(out / "transactions.csv", index=False)
+    print(f"  transactions.csv: {len(transactions):,} rows")
+
     rate_changes = generate_rate_changes()
     rate_changes.to_csv(out / "rate_changes.csv", index=False)
     print(f"  rate_changes.csv: {len(rate_changes)} rows")
@@ -273,6 +297,7 @@ def generate_all(output_dir: str = "data", n_per_year: int = 500) -> dict[str, P
         "policies": out / "policies.csv",
         "claims": out / "claims.csv",
         "valuations": out / "valuations.csv",
+        "transactions": out / "transactions.csv",
         "rate_changes": out / "rate_changes.csv",
         "expenses": out / "expenses.csv",
     }

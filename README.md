@@ -1,6 +1,6 @@
 # auto_actuary
 
-> **FCAS-level mathematics. Executive-grade output.**
+> **Actuarial mathematics. Strategic output.**
 
 A Python analytics platform for P&C insurance carriers. Built for actuaries and
 data scientists who need to move fast — and produce work that looks good in the boardroom.

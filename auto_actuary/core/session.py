@@ -169,7 +169,21 @@ class ActuarySession:
 
         tri = self.build_triangle(lob=lob, value=value, **kwargs)
         tri.develop()
-        return ReserveAnalysis(triangle=tri, config=self.config, methods=methods)
+
+        # Build earned premium by accident year for B-F / Cape Cod / Benktander
+        premium: Optional[pd.Series] = None
+        if "policies" in self.loader.loaded_tables:
+            pol = self.loader["policies"].copy()
+            if lob and "line_of_business" in pol.columns:
+                pol = pol[pol["line_of_business"] == lob]
+            if "effective_date" in pol.columns:
+                pol["_ay"] = pol["effective_date"].dt.year
+                ep_col = "earned_premium" if "earned_premium" in pol.columns else "written_premium"
+                if ep_col in pol.columns:
+                    premium = pol.groupby("_ay")[ep_col].sum()
+                    premium.index.name = "accident_year"
+
+        return ReserveAnalysis(triangle=tri, config=self.config, methods=methods, premium=premium)
 
     # ------------------------------------------------------------------
     # Ratemaking

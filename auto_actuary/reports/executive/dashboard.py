@@ -177,7 +177,7 @@ class ExecDashboard:
             delta=wp_delta, delta_dir=wp_delta_dir,
         )
         kpi_html += _kpi_card("Earned Premium", _fmt_m(kpis.get("earned_premium", 0)), "Current Year")
-        lr = kpis.get("incurred_loss_ratio", np.nan)
+        lr = kpis.get("loss_ratio", np.nan)
         lr_class = "danger" if (not np.isnan(lr) and lr > 0.75) else ("warn" if not np.isnan(lr) and lr > 0.65 else "good")
         kpi_html += f'<div class="kpi-card {lr_class}"><div class="kpi-label">Loss Ratio</div><div class="kpi-value">{_fmt_pct(lr) if not np.isnan(lr) else "N/A"}</div><div class="kpi-sub">Incurred / Earned</div></div>'
         cr = kpis.get("combined_ratio", np.nan)

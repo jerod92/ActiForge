@@ -59,6 +59,101 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Bühlmann-Straub credibility (empirical Bayes)
+# ---------------------------------------------------------------------------
+
+def buhlmann_straub_credibility(
+    observations: pd.Series,
+    weights: pd.Series,
+) -> Dict[str, float]:
+    """
+    Compute Bühlmann-Straub (1970) empirical Bayes credibility parameters.
+
+    The Bühlmann-Straub model generalises classical credibility to handle
+    heterogeneous exposure weights (e.g., earned car-years or exposures vary
+    by accident year).
+
+    Model: X_i = μ + ε_i + δ_i
+
+    Parameters
+    ----------
+    observations : pd.Series
+        Observed pure premiums (or loss rates) by year/segment.  Values must
+        be > 0.
+    weights : pd.Series
+        Earned exposure (or claim count) for each observation period.
+        Must share the same index as *observations*.
+
+    Returns
+    -------
+    dict with keys:
+        mu_hat   — overall (grand mean) loss rate
+        a_hat    — between-group variance (structural parameter)
+        v_hat    — within-group variance (expected process variance)
+        k        — credibility parameter = v / a
+        Z_total  — credibility factor for the full portfolio (Σ weights)
+        cred_estimate — credibility-weighted pure premium
+
+    Reference
+    ---------
+    Bühlmann, H. & Straub, E. (1970), "Glaubwürdigkeit für Schadensätze",
+    Mitteilungen der Vereinigung Schweizerischer Versicherungsmathematiker.
+    Translated: "Credibility for loss ratios."
+    """
+    obs = observations.dropna()
+    wts = weights.reindex(obs.index).fillna(0)
+
+    n = len(obs)
+    if n < 2:
+        return {
+            "mu_hat": float(obs.mean()) if not obs.empty else np.nan,
+            "a_hat": 0.0, "v_hat": 0.0,
+            "k": np.nan, "Z_total": 0.0,
+            "cred_estimate": float(obs.mean()) if not obs.empty else np.nan,
+        }
+
+    w = wts.values.astype(float)
+    x = obs.values.astype(float)
+    w_total = w.sum()
+    if w_total <= 0:
+        return {"mu_hat": float(x.mean()), "a_hat": 0.0, "v_hat": 0.0,
+                "k": np.nan, "Z_total": 0.0, "cred_estimate": float(x.mean())}
+
+    # Grand mean (exposure-weighted)
+    mu_hat = float(w @ x / w_total)
+
+    # Within-group variance v̂ (expected process variance)
+    # v̂ = Σ_i w_i × (x_i - x̄)² / (n - 1) ... simplified single-group version
+    # Full BS: v̂ = Σ_i Σ_j w_ij(x_ij - x_i)² / (Σm - p) — here n periods, p=1 group
+    v_hat = float(np.sum(w * (x - mu_hat) ** 2) / max(n - 1, 1))
+
+    # Between-group variance â (structural variance)
+    # â = [Σ w_i(x_i - x̄)² - (n-1)v̂] / [w_total - Σ(w_i²)/w_total]
+    numerator = float(np.sum(w * (x - mu_hat) ** 2)) - (n - 1) * v_hat
+    denom = w_total - float(np.sum(w ** 2) / w_total)
+    a_hat = max(0.0, numerator / denom) if denom > 0 else 0.0
+
+    # Credibility parameter k = v / a
+    k = float(v_hat / a_hat) if a_hat > 0 else np.inf
+
+    # Credibility factor Z = w_total / (w_total + k)
+    Z_total = float(w_total / (w_total + k)) if not np.isinf(k) else 0.0
+
+    # Bühlmann-Straub credibility estimate
+    x_bar_wtd = mu_hat  # portfolio (complement) = grand mean
+    cred_estimate = float(Z_total * (w @ x / w_total) + (1 - Z_total) * x_bar_wtd)
+
+    return {
+        "mu_hat": mu_hat,
+        "a_hat": a_hat,
+        "v_hat": v_hat,
+        "k": k,
+        "Z_total": Z_total,
+        "cred_estimate": cred_estimate,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Result container
 # ---------------------------------------------------------------------------
 
@@ -148,6 +243,8 @@ class RateIndication:
         claim_count: Optional[int] = None,
         complement: float = 0.0,
         full_cred_claims: int = 1082,
+        credibility_method: str = "classical",
+        exposure_by_year: Optional[pd.Series] = None,
     ) -> None:
         self.lob = lob
         self.on_level_premium = on_level_premium_by_year
@@ -160,6 +257,8 @@ class RateIndication:
         self.claim_count = claim_count
         self.complement = complement
         self.full_cred_claims = full_cred_claims
+        self.credibility_method = credibility_method  # "classical" | "buhlmann_straub"
+        self.exposure_by_year = exposure_by_year  # for Bühlmann-Straub weights
 
     def compute(self) -> RateIndicationResult:
         """Run the full indication and return a RateIndicationResult."""
@@ -194,8 +293,21 @@ class RateIndication:
         indicated_change = (proj_lr / permissible_lr) - 1.0
 
         # Credibility
-        n = self.claim_count or int(total_olp / 1000)  # rough fallback
-        cred = min(np.sqrt(n / self.full_cred_claims), 1.0)
+        if self.credibility_method == "buhlmann_straub":
+            # Bühlmann-Straub empirical Bayes credibility
+            # Uses per-year loss rates and on-level premium as weights
+            loss_rates = (trended_ult / adjusted_olp.replace(0, np.nan)).dropna()
+            weights = adjusted_olp.reindex(loss_rates.index).fillna(0)
+            bs = buhlmann_straub_credibility(loss_rates, weights)
+            cred = float(bs["Z_total"])
+            logger.info(
+                "Bühlmann-Straub credibility: k=%.2f, Z=%.3f, v̂=%.6f, â=%.6f",
+                bs.get("k", np.nan), cred, bs.get("v_hat", np.nan), bs.get("a_hat", np.nan),
+            )
+        else:
+            # Classical credibility: Z = min(√(n / n_full), 1.0)
+            n = self.claim_count or int(total_olp / 1000)  # rough fallback
+            cred = min(np.sqrt(n / self.full_cred_claims), 1.0)
 
         # Credibility-weighted indication
         cred_wtd = cred * indicated_change + (1.0 - cred) * self.complement

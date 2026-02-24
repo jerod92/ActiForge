@@ -130,6 +130,81 @@ class TestLossTriangle:
         assert (inc.triangle.iloc[:, 0] == small_triangle.triangle.iloc[:, 0]).all()
 
 
+class TestMedialAverageOrdering:
+    """Verify n_recent filtering happens before sort (the bug fix)."""
+
+    def test_n_recent_filters_by_recency_not_magnitude(self):
+        """
+        Given 5 periods with LDFs [1.5, 1.4, 1.3, 1.2, 1.1] (chronological),
+        with n_recent=3 and exclude=1:
+          - Should keep periods 3,4,5 (LDFs 1.3, 1.2, 1.1) — the most recent
+          - After sort: [1.1, 1.2, 1.3]; drop extremes → avg(1.2) = 1.2
+          - Bug (sort-first): would keep [1.1, 1.2, 1.3] by value (lowest 3),
+            then average middle → 1.2 (coincidentally same here)
+        Use an asymmetric case to distinguish the two orderings.
+        """
+        # LDFs by period: oldest=2.0, then 1.1, 1.2, 1.3, 1.4 (most recent)
+        # n_recent=3 should select 1.2, 1.3, 1.4 (most recent three)
+        # After sort+exclude: drop 1.2 and 1.4 → avg(1.3) = 1.3
+        # Bug (sort-first, n_recent=3 of sorted=[1.1,1.2,1.3] take last 3 → 1.1,1.2,1.3):
+        #   → avg(1.2) = 1.2  ≠ 1.3 ← distinguishable!
+        fc = pd.Series([100, 100, 100, 100, 100], index=[2018, 2019, 2020, 2021, 2022])
+        tc = pd.Series([200, 110, 120, 130, 140], index=[2018, 2019, 2020, 2021, 2022])
+        # Individual LDFs: 2.0, 1.1, 1.2, 1.3, 1.4 (chronological)
+        ldf = LDFMethods.medial_average(fc, tc, n_recent=3, exclude=1)
+        # Most recent 3: 1.2, 1.3, 1.4 → sort [1.2, 1.3, 1.4] → drop lo+hi → 1.3
+        assert abs(ldf - 1.3) < 1e-9
+
+    def test_n_recent_without_enough_data_returns_mean(self):
+        """When n_recent >= len, return mean without dropping (edge case)."""
+        fc = pd.Series([100, 100], index=[2021, 2022])
+        tc = pd.Series([110, 120], index=[2021, 2022])
+        ldf = LDFMethods.medial_average(fc, tc, n_recent=5, exclude=1)
+        # Only 2 points: 2×exclude=2 >= len=2, so return mean
+        assert abs(ldf - (1.10 + 1.20) / 2) < 1e-9
+
+
+class TestMackVariance:
+    """Test Mack 1994 process variance estimation."""
+
+    def test_mack_returns_dataframe(self, developed_triangle):
+        result = developed_triangle.mack_variance()
+        assert isinstance(result, pd.DataFrame)
+        assert "ibnr" in result.columns
+        assert "mack_std_error" in result.columns
+        assert "90pct_ci_lower" in result.columns
+        assert "90pct_ci_upper" in result.columns
+        assert "TOTAL" in result.index
+
+    def test_mack_std_error_nonnegative(self, developed_triangle):
+        result = developed_triangle.mack_variance()
+        for origin in developed_triangle.origins:
+            se = result.loc[origin, "mack_std_error"]
+            assert se >= 0, f"Standard error negative for origin {origin}"
+
+    def test_mack_ci_ordered(self, developed_triangle):
+        result = developed_triangle.mack_variance()
+        for origin in developed_triangle.origins:
+            ibnr = result.loc[origin, "ibnr"]
+            if ibnr > 0:
+                lo = result.loc[origin, "90pct_ci_lower"]
+                hi = result.loc[origin, "90pct_ci_upper"]
+                assert lo <= hi, f"CI inverted for origin {origin}"
+
+    def test_mack_mature_year_lower_uncertainty(self, developed_triangle):
+        """Most mature year (2019) should have lower relative uncertainty than youngest."""
+        result = developed_triangle.mack_variance()
+        se_2019 = result.loc[2019, "mack_std_error"]
+        se_2023 = result.loc[2023, "mack_std_error"]
+        ibnr_2019 = result.loc[2019, "ibnr"]
+        ibnr_2023 = result.loc[2023, "ibnr"]
+        # CV should be lower for mature year (if both have nonzero IBNR)
+        if ibnr_2019 > 0 and ibnr_2023 > 0 and se_2019 > 0 and se_2023 > 0:
+            cv_2019 = se_2019 / ibnr_2019
+            cv_2023 = se_2023 / ibnr_2023
+            assert cv_2019 <= cv_2023 + 0.5  # allow some tolerance
+
+
 class TestTailFitting:
     """Test tail factor methods."""
 

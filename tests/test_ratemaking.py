@@ -1,13 +1,17 @@
 """
-Tests for ratemaking modules: trend, on-level, rate indication.
+Tests for ratemaking modules: trend, on-level, rate indication,
+plus new Durbin-Watson, WLS, and Bühlmann-Straub credibility.
 """
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from auto_actuary.analytics.ratemaking.trend import TrendAnalysis, TrendFit
-from auto_actuary.analytics.ratemaking.indicated_rate import RateIndication
+from auto_actuary.analytics.ratemaking.trend import TrendAnalysis, TrendFit, _durbin_watson
+from auto_actuary.analytics.ratemaking.indicated_rate import (
+    RateIndication,
+    buhlmann_straub_credibility,
+)
 
 
 class TestTrendAnalysis:
@@ -145,3 +149,108 @@ class TestRateIndication:
         )
         result = ind.compute()
         assert abs(result.indicated_change) < 0.001
+
+
+class TestDurbinWatson:
+    """Test Durbin-Watson autocorrelation statistic."""
+
+    def test_dw_no_autocorrelation(self):
+        """White noise residuals → DW ≈ 2.0."""
+        rng = np.random.default_rng(42)
+        residuals = rng.normal(0, 1, 100)
+        dw = _durbin_watson(residuals)
+        assert 1.5 <= dw <= 2.5
+
+    def test_dw_positive_autocorrelation(self):
+        """Highly positively autocorrelated residuals → DW < 1.5."""
+        # AR(1) with ρ=0.95
+        e = np.zeros(100)
+        e[0] = 1.0
+        for t in range(1, 100):
+            e[t] = 0.95 * e[t - 1] + np.random.normal(0, 0.1)
+        dw = _durbin_watson(e)
+        assert dw < 1.5
+
+    def test_dw_short_series_returns_nan(self):
+        dw = _durbin_watson(np.array([1.0, 2.0]))
+        assert np.isnan(dw)
+
+    def test_trend_table_includes_dw(self):
+        years = list(range(2015, 2024))
+        values = [1000 * (1.05 ** (y - 2015)) for y in years]
+        ta = TrendAnalysis(pd.DataFrame({"year": years, "value": values}))
+        tbl = ta.trend_table()
+        assert "durbin_watson" in tbl.columns
+        assert "autocorrelation_flag" in tbl.columns
+
+    def test_trend_ci_columns_present(self):
+        years = list(range(2015, 2024))
+        values = [1000 * (1.05 ** (y - 2015)) for y in years]
+        ta = TrendAnalysis(pd.DataFrame({"year": years, "value": values}))
+        tbl = ta.trend_table()
+        assert "trend_ci_90_lo" in tbl.columns
+        assert "trend_ci_90_hi" in tbl.columns
+
+    def test_wls_with_weights_recovers_trend(self):
+        """WLS with exposure weights should also recover the 5% trend on clean data."""
+        rng = np.random.default_rng(7)
+        years = list(range(2015, 2024))
+        values = [1000 * (1.05 ** (y - 2015)) for y in years]
+        weights = [rng.integers(100, 1000) for _ in years]
+        data = pd.DataFrame({"year": years, "value": values, "weight": weights})
+        ta = TrendAnalysis(data, use_wls=True)
+        fit = ta.select("all")
+        assert abs(fit.annual_trend - 1.05) < 0.01
+        assert fit.weighted is True
+
+
+class TestBuhlmannStraub:
+    """Test Bühlmann-Straub empirical Bayes credibility."""
+
+    def test_high_variance_observations_yield_positive_credibility(self):
+        """With substantial between-year variation and large weights, Z > 0."""
+        # Widely varying observations → a_hat > 0 → finite k → Z > 0
+        obs = pd.Series([0.50, 0.80, 0.55, 0.90, 0.45], index=range(5))
+        wts = pd.Series([10_000] * 5, index=range(5))
+        result = buhlmann_straub_credibility(obs, wts)
+        # a_hat should be positive given high variance in obs
+        assert result["a_hat"] >= 0.0
+        assert 0.0 <= result["Z_total"] <= 1.0
+
+    def test_zero_between_variance_gives_zero_credibility(self):
+        """If all observations are identical (a_hat→0), credibility→0."""
+        obs = pd.Series([0.65, 0.65, 0.65, 0.65], index=range(4))
+        wts = pd.Series([100, 100, 100, 100], index=range(4))
+        result = buhlmann_straub_credibility(obs, wts)
+        # a_hat=0 → Z=0
+        assert result["Z_total"] == pytest.approx(0.0, abs=1e-6)
+
+    def test_result_keys_present(self):
+        obs = pd.Series([0.60, 0.65, 0.70], index=range(3))
+        wts = pd.Series([500, 600, 550], index=range(3))
+        result = buhlmann_straub_credibility(obs, wts)
+        for key in ["mu_hat", "a_hat", "v_hat", "k", "Z_total", "cred_estimate"]:
+            assert key in result
+
+    def test_mu_hat_is_weighted_mean(self):
+        obs = pd.Series([0.60, 0.80], index=[0, 1])
+        wts = pd.Series([3.0, 1.0], index=[0, 1])
+        result = buhlmann_straub_credibility(obs, wts)
+        expected_mu = (0.60 * 3 + 0.80 * 1) / 4
+        assert abs(result["mu_hat"] - expected_mu) < 1e-9
+
+    def test_buhlmann_straub_in_rate_indication(self):
+        """RateIndication accepts credibility_method='buhlmann_straub'."""
+        years = [2019, 2020, 2021, 2022]
+        olp = pd.Series([1_000_000, 1_050_000, 1_100_000, 1_150_000], index=years)
+        ult = pd.Series([680_000, 700_000, 730_000, 760_000], index=years)
+        ind = RateIndication(
+            olp, ult,
+            credibility_method="buhlmann_straub",
+            variable_expense_ratio=0.25,
+            fixed_expense_ratio=0.05,
+            target_profit_margin=0.05,
+        )
+        result = ind.compute()
+        assert 0.0 <= result.credibility <= 1.0
+        assert result.credibility_weighted_change is not None

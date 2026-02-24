@@ -61,54 +61,190 @@ VAL_DATES = pd.to_datetime([f"{yr}-12-31" for yr in range(2018, 2025)])
 
 
 def generate_policies(n_per_year: int = 2_000) -> pd.DataFrame:
-    records = []
-    pid = 1
+    """
+    Generate a realistic policy portfolio with proper renewal chains.
+
+    Each account (insured) has a stable policy_number that persists across
+    renewal terms so that the retention analysis can match consecutive terms.
+    Retention rates vary by class and territory to make segment analytics
+    interesting.
+    """
     base_premium = 900  # base annual premium at 2018 rates
+    cutoff = pd.Timestamp("2023-12-31")
 
     rate_index = 1.0
     rate_schedule = {pd.Timestamp(r["eff_date"]): r["rate_chg_pct"] for r in RATE_CHANGES}
+    _applied_changes: set = set()
+
+    # -----------------------------------------------------------------------
+    # Build rate index per year (applied once at year boundary)
+    # -----------------------------------------------------------------------
+    rate_by_year: dict = {}
+    ri = 1.0
+    applied: set = set()
+    for yr in YEARS:
+        for chg_date, pct in sorted(rate_schedule.items()):
+            if chg_date.year <= yr and chg_date not in applied:
+                ri *= (1 + pct)
+                applied.add(chg_date)
+        rate_by_year[yr] = ri
+
+    # -----------------------------------------------------------------------
+    # Model insured accounts
+    # Each account starts in a random year and may lapse/renew each year.
+    # Retention probability varies by class (class 01 = best, 04 = worst).
+    # -----------------------------------------------------------------------
+    RETENTION_PROB = {"01": 0.88, "02": 0.82, "03": 0.75, "04": 0.65}
+    TERR_RETENTION = {"North": 1.00, "South": 0.98, "East": 0.97, "West": 1.01, "Metro": 0.95}
+
+    records = []
+    pid = 1
+    acct_id = 1
+    # Pool of active accounts: dict of acct_id → {eff, exp, terr, cls, pol_num, agent}
+    active_accounts: dict = {}
+
+    # Seed the pool with n_per_year new business in the first year (2018)
+    yr0 = YEARS[0]
+    ri0 = rate_by_year[yr0]
+    for _ in range(n_per_year):
+        eff = pd.Timestamp(f"{yr0}-01-01") + pd.Timedelta(days=int(RNG.integers(0, 365)))
+        exp = eff + pd.DateOffset(years=1)
+        terr = RNG.choice(TERRITORIES)
+        cls  = RNG.choice(CLASS_CODES)
+        pol_num = f"PPA-{acct_id:07d}"
+        agent = f"AGT-{RNG.integers(1, 50):03d}"
+        cls_mult  = {"01": 0.85, "02": 1.00, "03": 1.20, "04": 1.50}[cls]
+        terr_mult = {"North": 0.95, "South": 1.05, "East": 1.00, "West": 0.92, "Metro": 1.15}[terr]
+        prem = base_premium * ri0 * cls_mult * terr_mult * RNG.lognormal(0, 0.1)
+        policy_days = max((exp - eff).days, 1)
+        earn_end = min(pd.Timestamp(exp), cutoff)
+        earn_days = max((earn_end - eff).days, 0)
+        records.append({
+            "policy_id":     pid,
+            "policy_number": pol_num,
+            "written_date":  eff,
+            "eff_date":      eff,
+            "exp_date":      pd.Timestamp(exp),
+            "cancel_date":   None,
+            "lob_code":      "PPA",
+            "sub_line":      "PPA",
+            "terr_code":     terr,
+            "class_code":    cls,
+            "insured_id":    f"INS-{acct_id:07d}",
+            "agent_code":    agent,
+            "wrt_prem":      round(prem, 2),
+            "ern_prem":      round(prem * earn_days / policy_days, 2),
+            "wrt_exposure":  1.0,
+            "exp_unit":      "car-year",
+            "txn_type":      "NB",
+        })
+        active_accounts[acct_id] = {
+            "eff": eff, "exp": pd.Timestamp(exp),
+            "terr": terr, "cls": cls, "pol_num": pol_num, "agent": agent
+        }
+        acct_id += 1
+        pid += 1
 
     for yr in YEARS:
-        # Apply rate changes effective in this year
-        for chg_date, pct in sorted(rate_schedule.items()):
-            if chg_date.year <= yr and chg_date not in getattr(generate_policies, "_applied", set()):
-                rate_index *= (1 + pct)
-        if not hasattr(generate_policies, "_applied"):
-            generate_policies._applied = set()
+        ri = rate_by_year[yr]
+        year_start = pd.Timestamp(f"{yr}-01-01")
+        year_end   = pd.Timestamp(f"{yr}-12-31")
 
-        for _ in range(n_per_year):
-            eff = pd.Timestamp(f"{yr}-01-01") + pd.Timedelta(days=int(RNG.integers(0, 365)))
+        # ---- Process renewals for accounts expiring this year ----
+        still_active: dict = {}
+        for aid, acc in active_accounts.items():
+            exp = acc["exp"]
+            if exp.year != yr:
+                still_active[aid] = acc
+                continue
+            # Renewal decision
+            ret_p = RETENTION_PROB[acc["cls"]] * TERR_RETENTION[acc["terr"]]
+            if RNG.random() < ret_p:
+                # Renew
+                new_eff = exp
+                new_exp = new_eff + pd.DateOffset(years=1)
+                still_active[aid] = {**acc, "eff": new_eff, "exp": new_exp}
+                cls_mult  = {"01": 0.85, "02": 1.00, "03": 1.20, "04": 1.50}[acc["cls"]]
+                terr_mult = {"North": 0.95, "South": 1.05, "East": 1.00, "West": 0.92, "Metro": 1.15}[acc["terr"]]
+                prem = base_premium * ri * cls_mult * terr_mult * RNG.lognormal(0, 0.08)
+                policy_days = max((new_exp - new_eff).days, 1)
+                earn_end = min(new_exp, cutoff)
+                earn_days = max((earn_end - new_eff).days, 0)
+                records.append({
+                    "policy_id":     pid,
+                    "policy_number": acc["pol_num"],
+                    "written_date":  new_eff,
+                    "eff_date":      new_eff,
+                    "exp_date":      pd.Timestamp(new_exp),
+                    "cancel_date":   None,
+                    "lob_code":      "PPA",
+                    "sub_line":      "PPA",
+                    "terr_code":     acc["terr"],
+                    "class_code":    acc["cls"],
+                    "insured_id":    f"INS-{aid:07d}",
+                    "agent_code":    acc["agent"],
+                    "wrt_prem":      round(prem, 2),
+                    "ern_prem":      round(prem * earn_days / policy_days, 2),
+                    "wrt_exposure":  1.0,
+                    "exp_unit":      "car-year",
+                    "txn_type":      "RN",
+                })
+                pid += 1
+            # else: lapsed — account exits
+
+        active_accounts = still_active
+
+        # ---- Write new business to maintain portfolio size ----
+        current_size = sum(1 for a in active_accounts.values() if a["eff"].year <= yr)
+        nb_needed = max(0, n_per_year - len(active_accounts))
+        for _ in range(nb_needed):
+            eff = year_start + pd.Timedelta(days=int(RNG.integers(0, 365)))
             exp = eff + pd.DateOffset(years=1)
             terr = RNG.choice(TERRITORIES)
             cls  = RNG.choice(CLASS_CODES)
-            txn  = RNG.choice(["NB", "RN", "RN", "RN"])  # 75% renewal
-
-            # Class and territory multipliers
+            pol_num = f"PPA-{acct_id:07d}"
+            agent = f"AGT-{RNG.integers(1, 50):03d}"
             cls_mult  = {"01": 0.85, "02": 1.00, "03": 1.20, "04": 1.50}[cls]
             terr_mult = {"North": 0.95, "South": 1.05, "East": 1.00, "West": 0.92, "Metro": 1.15}[terr]
-            prem = base_premium * rate_index * cls_mult * terr_mult * RNG.lognormal(0, 0.1)
-
+            prem = base_premium * ri * cls_mult * terr_mult * RNG.lognormal(0, 0.1)
+            policy_days = max((exp - eff).days, 1)
+            earn_end = min(pd.Timestamp(exp), cutoff)
+            earn_days = max((earn_end - eff).days, 0)
             records.append({
-                "policy_id":       pid,
-                "policy_number":   f"PPA-{yr}-{pid:06d}",
-                "written_date":    eff,
-                "eff_date":        eff,
-                "exp_date":        exp,
-                "cancel_date":     None,
-                "lob_code":        "PPA",
-                "sub_line":        "PPA",
-                "terr_code":       terr,
-                "class_code":      cls,
-                "insured_id":      f"INS-{pid:07d}",
-                "agent_code":      f"AGT-{RNG.integers(1, 50):03d}",
-                "wrt_prem":        round(prem, 2),
-                "wrt_exposure":    1.0,  # 1 car-year
-                "exp_unit":        "car-year",
-                "txn_type":        txn,
+                "policy_id":     pid,
+                "policy_number": pol_num,
+                "written_date":  eff,
+                "eff_date":      eff,
+                "exp_date":      pd.Timestamp(exp),
+                "cancel_date":   None,
+                "lob_code":      "PPA",
+                "sub_line":      "PPA",
+                "terr_code":     terr,
+                "class_code":    cls,
+                "insured_id":    f"INS-{acct_id:07d}",
+                "agent_code":    agent,
+                "wrt_prem":      round(prem, 2),
+                "ern_prem":      round(prem * earn_days / policy_days, 2),
+                "wrt_exposure":  1.0,
+                "exp_unit":      "car-year",
+                "txn_type":      "NB",
             })
+            active_accounts[acct_id] = {"eff": eff, "exp": exp, "terr": terr, "cls": cls,
+                                         "pol_num": pol_num, "agent": agent}
+            acct_id += 1
             pid += 1
 
-    return pd.DataFrame(records)
+        # ---- Record existing in-force accounts that were written before this year ----
+        # (capture accounts whose effective date is in this year but not yet recorded)
+        for aid, acc in active_accounts.items():
+            if acc["eff"].year == yr and not any(
+                r["policy_number"] == acc["pol_num"] and r["eff_date"] == acc["eff"]
+                for r in records[-nb_needed:]
+            ):
+                pass  # already recorded above in the renewal or NB block
+
+    df = pd.DataFrame(records)
+    return df
 
 
 def generate_claims(policies: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:

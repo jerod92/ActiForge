@@ -9,3 +9,6 @@ __all__ = [
     "MarketBreakdownAnalysis",
     "ProductMixAnalysis",
 ]
+from auto_actuary.analytics.portfolio.segment_analytics import SegmentAnalytics
+
+__all__ += ["SegmentAnalytics"]

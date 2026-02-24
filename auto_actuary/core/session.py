@@ -803,6 +803,81 @@ class ActuarySession:
         )
 
     # ------------------------------------------------------------------
+    # Segment Analytics
+    # ------------------------------------------------------------------
+
+    def segment_analytics(
+        self,
+        lob: Optional[str] = None,
+        segment_cols: Optional[list] = None,
+    ) -> "auto_actuary.analytics.portfolio.segment_analytics.SegmentAnalytics":  # type: ignore[name-defined]
+        """
+        Build a SegmentAnalytics object for the loaded session data.
+
+        Segments are configured in schema.yaml under segmentation.geo_segments
+        and segmentation.market_segments.  You can also pass segment_cols
+        directly to override the config.
+
+        Parameters
+        ----------
+        lob : str, optional
+            Filter to a single line of business.
+        segment_cols : list of str, optional
+            Override segment dimensions from config.
+
+        Returns
+        -------
+        SegmentAnalytics
+
+        Example
+        -------
+        >>> sa = session.segment_analytics(lob="PPA")
+        >>> sa.retention_trend("territory")
+        >>> sa.clv_by_segment("class_code")
+        """
+        from auto_actuary.analytics.portfolio.segment_analytics import SegmentAnalytics
+
+        return SegmentAnalytics.from_session(session=self, lob=lob, segment_cols=segment_cols)
+
+    def segment_dashboard(
+        self,
+        output_path: Union[str, Path] = "output/segment_dashboard.html",
+        lob: Optional[str] = None,
+        segment_cols: Optional[list] = None,
+    ) -> Path:
+        """
+        Generate and save the Segment Analytics Dashboard.
+
+        The dashboard shows retention, loss trends, profitability, and CLV
+        for every segment dimension defined in config/schema.yaml under
+        segmentation.geo_segments and segmentation.market_segments.
+
+        Parameters
+        ----------
+        output_path : str or Path
+            Output HTML file path.
+        lob : str, optional
+            Filter to a single line of business.
+        segment_cols : list of str, optional
+            Override segment dimensions from config.
+
+        Returns
+        -------
+        Path to the rendered HTML file.
+
+        Example
+        -------
+        >>> session.segment_dashboard(output_path="output/segment_dashboard.html", lob="PPA")
+        """
+        from auto_actuary.analytics.portfolio.segment_analytics import SegmentAnalytics
+        from auto_actuary.reports.executive.segment_dashboard import SegmentDashboard
+
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        sa = SegmentAnalytics.from_session(session=self, lob=lob, segment_cols=segment_cols)
+        dash = SegmentDashboard(analytics=sa, config=self.config, lob=lob)
+        return dash.render(output_path=output_path)
+
+    # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
 

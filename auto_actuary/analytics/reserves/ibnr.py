@@ -26,9 +26,15 @@ philosophy about how much to trust the data vs. prior expectations:
   Like B-F, but derives the ELR from the data itself rather than requiring
   an a-priori assumption.
 
-      ELR_cape_cod = Σ Reported / Σ (Premium × Used-Up %)
-      Used-Up %(AY) = 1 − 1/CDF(latest age)
+      Used-Up Premium(AY) = Premium(AY) × (1/CDF)   [= Premium × % Reported]
+      ELR_cape_cod        = Σ Reported / Σ Used-Up Premium
+      IBNR(AY)            = ELR_CC × Premium(AY) × (1 − 1/CDF)
       Then proceeds as B-F.
+
+  Note: "Used-up premium" represents the portion of premium that has already
+  been committed to cover reported losses.  This is Premium × % Reported
+  (= Premium / CDF), NOT Premium × % Unreported.  See Friedland (2010),
+  Section 4.2, and Mack (1994) Derivation 2.
 
   Benktander (Iterated B-F)
   -------------------------
@@ -159,11 +165,13 @@ class ReserveAnalysis:
             )
 
         # ---- Cape Cod (derive ELR from data) ----
+        # Used-up premium = Premium × % Reported = Premium / CDF  (Friedland 2010, §4.2)
         elr_cc = None
         if "cape_cod" in self.methods or "bornhuetter_ferguson" in self.methods or "benktander" in self.methods:
             if self.premium is not None:
                 prem_aligned = self.premium.reindex(origins)
-                used_up_prem = prem_aligned * (1.0 - 1.0 / cdfs)
+                # Correct: used-up premium = Premium × (1/CDF) = Premium / CDF
+                used_up_prem = prem_aligned / cdfs
                 used_up_total = used_up_prem.sum()
                 if used_up_total > 0:
                     elr_cc = float(diag.sum() / used_up_total)

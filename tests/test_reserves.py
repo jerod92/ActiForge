@@ -114,8 +114,10 @@ class TestCapeCod:
 
     def test_cc_elr_derived_from_data(self, reserve_analysis, developed_tri):
         """
-        Cape Cod ELR = Σ Reported / Σ (Premium × Used-Up%)
-        Verify the relationship holds.
+        Cape Cod ELR = Σ Reported / Σ (Premium / CDF)
+        i.e. Σ Reported / Σ Used-Up-Premium, where
+        Used-Up Premium = Premium × % Reported = Premium / CDF.
+        (Friedland 2010, §4.2; Mack 1994 Derivation 2)
         """
         cc = reserve_analysis.result("cape_cod")
         diag = developed_tri.latest_diagonal
@@ -123,7 +125,8 @@ class TestCapeCod:
             o: developed_tri._cdfs.get(developed_tri._latest_age.get(o), 1.0)
             for o in ORIGINS
         })
-        used_up = PREMIUM * (1 - 1/cdfs)
+        # Correct: used-up premium = Premium / CDF (% reported portion)
+        used_up = PREMIUM / cdfs
         expected_elr = diag.sum() / used_up.sum()
         assert abs(cc.elr - expected_elr) < 0.001
 

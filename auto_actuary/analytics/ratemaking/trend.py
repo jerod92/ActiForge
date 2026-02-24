@@ -42,8 +42,29 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from scipy import stats
+from scipy.stats import chi2
 
 logger = logging.getLogger(__name__)
+
+
+def _durbin_watson(residuals: np.ndarray) -> float:
+    """
+    Compute the Durbin-Watson statistic for autocorrelation in residuals.
+
+        DW = Σ_{t=2}^{n} (e_t - e_{t-1})² / Σ e_t²
+
+    Interpretation:
+      DW ≈ 2  → no autocorrelation (ideal)
+      DW < 1.5 → positive autocorrelation (common in loss cost trends)
+      DW > 2.5 → negative autocorrelation
+
+    Reference: Durbin & Watson (1950, 1951).
+    """
+    if len(residuals) < 3:
+        return np.nan
+    diff = np.diff(residuals)
+    dw = float(np.sum(diff ** 2) / np.sum(residuals ** 2)) if np.sum(residuals ** 2) > 0 else np.nan
+    return dw
 
 
 # ---------------------------------------------------------------------------
@@ -63,10 +84,18 @@ class TrendFit:
     slope: float
     start_year: Optional[int] = None
     end_year: Optional[int] = None
+    durbin_watson: Optional[float] = None  # DW statistic for serial autocorrelation
+    weighted: bool = False               # True if fit used WLS (exposure-weighted)
+    slope_ci_90: Optional[Tuple[float, float]] = None  # 90% CI on annual_trend
 
     @property
     def is_significant(self) -> bool:
         return self.p_value < 0.10  # 90% confidence
+
+    @property
+    def has_autocorrelation(self) -> bool:
+        """True if DW < 1.5 (positive autocorrelation warning)."""
+        return self.durbin_watson is not None and self.durbin_watson < 1.5
 
     @property
     def trend_pct(self) -> float:
@@ -76,9 +105,11 @@ class TrendFit:
         return self.annual_trend ** n_years
 
     def __repr__(self) -> str:
+        dw_str = f", DW={self.durbin_watson:.2f}" if self.durbin_watson is not None else ""
+        wgt_str = " [WLS]" if self.weighted else ""
         return (
-            f"TrendFit({self.period_label}: {self.trend_pct:+.2%}/yr, "
-            f"R²={self.r_squared:.3f}, p={self.p_value:.3f})"
+            f"TrendFit({self.period_label}{wgt_str}: {self.trend_pct:+.2%}/yr, "
+            f"R²={self.r_squared:.3f}, p={self.p_value:.3f}{dw_str})"
         )
 
 
@@ -94,12 +125,18 @@ class TrendAnalysis:
     ----------
     data : pd.DataFrame
         Must have columns: year (int) | value (float)
+        Optional column: weight (float) — earned exposure or claim counts for WLS.
         where value is pure premium, frequency, or severity.
     periods : list[int]
         Number of years to use in each trend fit, e.g. [3, 5, 10].
         'all' is always included.
     metric_name : str
         Label for the metric being trended (for display).
+    use_wls : bool
+        If True and a 'weight' column is present, fit using weighted least squares
+        (WLS) with weights proportional to earned exposure.  WLS is preferred for
+        pure premium trends because years with more exposure should carry more
+        weight (Werner & Modlin 2016, §6.3).
     """
 
     def __init__(
@@ -107,6 +144,7 @@ class TrendAnalysis:
         data: pd.DataFrame,
         periods: Optional[List[int]] = None,
         metric_name: str = "pure_premium",
+        use_wls: bool = True,
     ) -> None:
         if "year" not in data.columns or "value" not in data.columns:
             raise ValueError("data must have 'year' and 'value' columns")
@@ -115,6 +153,7 @@ class TrendAnalysis:
         self.data = self.data[self.data["value"] > 0]  # log-linear requires positive
         self.periods = periods or [3, 5, 10]
         self.metric_name = metric_name
+        self.use_wls = use_wls and "weight" in self.data.columns
 
         self._fits: List[TrendFit] = []
         self._selected: Optional[TrendFit] = None
@@ -125,7 +164,13 @@ class TrendAnalysis:
     # ------------------------------------------------------------------
 
     def _fit_period(self, years_subset: pd.DataFrame, label: str) -> Optional[TrendFit]:
-        """Fit log-linear trend to a subset of the data."""
+        """
+        Fit log-linear trend to a subset of the data.
+
+        Uses WLS when exposure weights are available (self.use_wls=True).
+        The Durbin-Watson statistic is computed on residuals to flag
+        serial autocorrelation.
+        """
         if len(years_subset) < 2:
             return None
 
@@ -136,20 +181,73 @@ class TrendAnalysis:
         x_min = x.min()
         x_c = x - x_min
 
-        slope, intercept, r, p, se = stats.linregress(x_c, y)
+        weighted = False
+        if self.use_wls and "weight" in years_subset.columns:
+            w = years_subset["weight"].values.astype(float)
+            w = np.where(w > 0, w, 1e-10)  # guard against zero weights
+            w = w / w.sum()  # normalise
+            # WLS via the weighted normal equations
+            # β = (X'WX)^{-1} X'Wy  with X = [1, x_c]
+            W = np.diag(w)
+            X = np.column_stack([np.ones_like(x_c), x_c])
+            try:
+                XtW = X.T @ W
+                beta = np.linalg.solve(XtW @ X, XtW @ y)
+                intercept, slope = float(beta[0]), float(beta[1])
+                y_hat = intercept + slope * x_c
+                residuals = y - y_hat
+                ss_res = float(w @ residuals ** 2)
+                ss_tot = float(w @ (y - float(np.average(y, weights=w))) ** 2)
+                r2 = max(0.0, 1.0 - ss_res / ss_tot) if ss_tot > 0 else 0.0
+                # Approximate standard error of slope via WLS variance formula
+                se_slope = float(
+                    np.sqrt(ss_res / max(len(x) - 2, 1) / float(w @ (x_c - np.average(x_c, weights=w)) ** 2))
+                    if float(w @ (x_c - np.average(x_c, weights=w)) ** 2) > 0 else np.nan
+                )
+                # t-test for slope significance
+                t_stat = slope / se_slope if se_slope and se_slope > 0 else np.nan
+                df = max(len(x) - 2, 1)
+                p_val = float(2 * (1 - stats.t.cdf(abs(t_stat), df=df))) if not np.isnan(t_stat) else np.nan
+                weighted = True
+            except np.linalg.LinAlgError:
+                # Fallback to OLS
+                slope, intercept, r, p_val, se_slope = stats.linregress(x_c, y)
+                r2, residuals = float(r ** 2), y - (intercept + slope * x_c)
+        else:
+            slope, intercept, r, p_val, se_slope = stats.linregress(x_c, y)
+            r2 = float(r ** 2)
+            y_hat = intercept + slope * x_c
+            residuals = y - y_hat
+
         annual_trend = np.exp(slope)
+
+        # Durbin-Watson on log-residuals
+        dw = _durbin_watson(residuals)
+
+        # 90% CI on slope → transform to CI on annual trend
+        df_ci = max(len(x) - 2, 1)
+        t90 = float(stats.t.ppf(0.95, df=df_ci))
+        if not np.isnan(se_slope):
+            slope_lo = slope - t90 * se_slope
+            slope_hi = slope + t90 * se_slope
+            trend_ci = (float(np.exp(slope_lo)), float(np.exp(slope_hi)))
+        else:
+            trend_ci = None
 
         return TrendFit(
             period_label=label,
             n_points=len(years_subset),
             annual_trend=float(annual_trend),
-            r_squared=float(r ** 2),
-            p_value=float(p),
-            std_err=float(se),
+            r_squared=float(r2),
+            p_value=float(p_val),
+            std_err=float(se_slope),
             intercept=float(intercept),
             slope=float(slope),
             start_year=int(x.min()),
             end_year=int(x.max()),
+            durbin_watson=dw,
+            weighted=weighted,
+            slope_ci_90=trend_ci,
         )
 
     def _fit_all(self) -> None:
@@ -205,10 +303,14 @@ class TrendAnalysis:
         """
         Return a comparison table of all fitted trends.
 
-        Columns: period | start_year | end_year | n_pts | annual_trend | trend_pct | r_sq | p_value | significant
+        Columns: period | start_year | end_year | n_pts | annual_trend | trend_pct |
+                 trend_ci_lo | trend_ci_hi | r_squared | p_value | significant |
+                 durbin_watson | autocorrelation_flag | weighted
         """
         rows = []
         for fit in self._fits:
+            ci_lo = fit.slope_ci_90[0] if fit.slope_ci_90 else np.nan
+            ci_hi = fit.slope_ci_90[1] if fit.slope_ci_90 else np.nan
             rows.append(
                 {
                     "period": fit.period_label,
@@ -217,9 +319,14 @@ class TrendAnalysis:
                     "n_pts": fit.n_points,
                     "annual_trend": fit.annual_trend,
                     "trend_pct": fit.trend_pct,
+                    "trend_ci_90_lo": ci_lo,
+                    "trend_ci_90_hi": ci_hi,
                     "r_squared": fit.r_squared,
                     "p_value": fit.p_value,
                     "significant": fit.is_significant,
+                    "durbin_watson": fit.durbin_watson,
+                    "autocorrelation_flag": fit.has_autocorrelation,
+                    "weighted": fit.weighted,
                 }
             )
         return pd.DataFrame(rows)

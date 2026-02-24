@@ -115,10 +115,16 @@ class CombinedRatioReport:
         df["combined_ratio"] = df["loss_lae_ratio"] + df["expense_ratio"]
         df["uw_profit_loss"] = df["earned_premium"] - df["total_loss_lae"] - df.get("expense_amount", 0)
 
+        # Drop years where no earned premium was written — these are calendar-year
+        # spillovers caused by late-developing claims and do not represent real
+        # underwriting periods.  They would make current_year() return NaN for
+        # the most recent actual policy year.
+        df = df[df["earned_premium"] > 0]
+
         return df.sort_index()
 
     def current_year(self) -> Dict[str, float]:
-        """KPIs for the most recent calendar year."""
+        """KPIs for the most recent calendar year with written premium."""
         tbl = self.by_year()
         if tbl.empty:
             return {}

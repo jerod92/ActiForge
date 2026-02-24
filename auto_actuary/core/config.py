@@ -183,6 +183,41 @@ class ActuaryConfig:
         return self._assumptions.get("reporting", {}).get("accent_color", "#0099CC")
 
     # ------------------------------------------------------------------
+    # Segmentation helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def geo_segments(self) -> list:
+        """Column names for geographic segmentation (from schema.yaml segmentation.geo_segments)."""
+        return self._schema.get("segmentation", {}).get("geo_segments", ["territory"])
+
+    @property
+    def market_segments(self) -> list:
+        """Column names for market segmentation (from schema.yaml segmentation.market_segments)."""
+        return self._schema.get("segmentation", {}).get("market_segments", ["class_code"])
+
+    @property
+    def all_segments(self) -> list:
+        """Union of geo and market segment column names, deduplicated."""
+        seen: set = set()
+        result = []
+        for col in self.geo_segments + self.market_segments:
+            if col not in seen:
+                seen.add(col)
+                result.append(col)
+        return result
+
+    def segment_label(self, col: str) -> str:
+        """Human-readable label for a segment column."""
+        labels = self._schema.get("segmentation", {}).get("segment_labels", {})
+        return labels.get(col, col.replace("_", " ").title())
+
+    @property
+    def time_granularity(self) -> str:
+        """Time granularity for segment trend charts: 'year' or 'quarter'."""
+        return self._schema.get("segmentation", {}).get("time_granularity", "year")
+
+    # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------
 

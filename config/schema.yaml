@@ -38,11 +38,11 @@ policies:
   sub_line:           sub_line            # optional sub-classification
   territory:          terr_code           # state / territory code
   class_code:         class_code          # underwriting class
-  # transaction_type belongs in the transactions table, not policies.
-  # The policies query joins transactions only to obtain base premium/exposure.
   risk_id:            insured_id
   agent_id:           agent_code
   written_premium:    wrt_prem
+  earned_premium:     ern_prem            # pro-rata earned premium through cut-off date
+  transaction_type:   txn_type            # NB (new business) | RN (renewal)
   written_exposure:   wrt_exposure        # car-years, house-years, etc.
   exposure_unit:      exp_unit            # label: "car-year", "house-year"
 
@@ -133,3 +133,87 @@ expenses:
   amount:             exp_amount
   written_premium:    wrt_prem            # for ratio calculation
   earned_premium:     ern_prem
+
+# =============================================================================
+# Segmentation Configuration
+# =============================================================================
+# Define which columns from your policies/claims tables represent geographic
+# and market segments.  These drive the Segment Analytics Dashboard.
+#
+# Column names must match CANONICAL names after schema renaming (i.e., the
+# left-hand side values above, not the raw DB column names).
+#
+# GEO_SEGMENTS   — geographic breakdowns, e.g. state, region, zip_tier
+# MARKET_SEGMENTS — underwriting/market breakdowns, e.g. class_code, agent tier
+#
+# Add as many entries as you like.  They will become filter dropdowns in the
+# Segment Analytics Dashboard.  Columns must exist in the policies table.
+# =============================================================================
+segmentation:
+  geo_segments:
+    - territory          # always available in the demo schema
+
+  market_segments:
+    - class_code         # always available in the demo schema
+    - agent_id           # agent who wrote the policy
+
+  # Segment labels (optional — used for display only)
+  segment_labels:
+    territory:  "Territory"
+    class_code: "Class Code"
+    agent_id:   "Agent"
+
+  # Time granularity for segment trend charts
+  time_granularity: year   # year | quarter
+
+  # -------------------------------------------------------------------------
+  # SQL Output Requirements for Segment Analytics
+  # -------------------------------------------------------------------------
+  # If you source data from a SQL database, your policy-level query must
+  # include the following columns (in addition to the standard policies schema):
+  #
+  # REQUIRED columns for segment analytics to work:
+  #   policy_id          — unique policy term key
+  #   risk_id            — account/insured identifier (for retention tracking)
+  #   policy_number      — shared across consecutive terms (for renewal matching)
+  #   effective_date     — coverage start date (determines accident year)
+  #   expiration_date    — coverage end date (used for retention)
+  #   transaction_type   — NB (new business) or RN (renewal)
+  #   written_premium    — written premium for the term
+  #   earned_premium     — pro-rata earned premium through your cut-off date
+  #   line_of_business   — LOB code
+  #   <segment columns>  — each column listed in geo_segments / market_segments
+  #
+  # REQUIRED columns for loss metrics in segment dashboard:
+  #   From claims + latest valuation join:
+  #   incurred_loss      — total incurred loss (paid + case reserve)
+  #   paid_loss          — paid to date
+  #   claim_count        — number of claims (1 per claim row before aggregation)
+  #
+  # Example SQL for the policies-level time-series extract:
+  #
+  #   SELECT
+  #       p.policy_id,
+  #       p.risk_id,
+  #       p.policy_number,
+  #       p.eff_date         AS effective_date,
+  #       p.exp_date         AS expiration_date,
+  #       t.txn_type         AS transaction_type,   -- NB or RN
+  #       p.wrt_prem         AS written_premium,
+  #       -- Pro-rata earned premium through your evaluation date:
+  #       p.wrt_prem * DATEDIFF(LEAST(p.exp_date, '2023-12-31'), p.eff_date)
+  #           / NULLIF(DATEDIFF(p.exp_date, p.eff_date), 0) AS earned_premium,
+  #       p.lob_code         AS line_of_business,
+  #       p.terr_code        AS territory,          -- geo segment
+  #       p.class_code,                             -- market segment
+  #       p.agent_code       AS agent_id            -- market segment
+  #   FROM policies p
+  #   LEFT JOIN transactions t ON p.policy_id = t.policy_id
+  #       AND t.txn_type IN ('NB','RN')
+  #   WHERE p.lob_code = 'PPA'
+  #     AND p.eff_date >= '2018-01-01'
+  #
+  # For retention: the analytics engine self-joins policies on (policy_number,
+  # effective year = prior year + 1) to determine if a policy renewed.
+  # No additional SQL column is needed — just ensure policy_number is consistent
+  # across terms.
